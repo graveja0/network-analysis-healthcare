@@ -14,6 +14,148 @@ knitr::opts_chunk$set(echo = FALSE)
 knitr::opts_chunk$set(warning = FALSE)
 knitr::opts_chunk$set(message = FALSE)
 knitr::opts_chunk$set(cache = FALSE)
+
+library(tidyverse)
+library(tidygraph)
+library(igraph)
+library(ggraph)
+library(ggdendro)
+library(hrbrthemes)
+library(patchwork)
+library(ggthemes)
+library(sf)
+library(glue)
+library(here)
+library(rlang)
+set.seed(12345)
+source(here("R/shared-functions.r"))
+
 ```
 
-Readme!
+# A Basic Example
+
+We'll start with a simple example. Here is the adjacency matrix representing a patient demand system. 
+
+```{r}
+B <-
+    data.frame(A = c(rpois(2,lambda=10),rep(0,10)),
+               B = c(rpois(3,lambda=15),rep(0,9)),
+               C = c(rep(0,1),rpois(5,lambda=100),rep(0,6)),
+               D = c(rep(0,2),rpois(4,lambda=50),rep(0,6)),
+               E = c(rep(0,2),rpois(4,lambda=400),rep(0,6)),
+               F = c(rep(0,2),rpois(4,lambda=100),rep(0,6)),
+               G = c(rep(0,5),rpois(1,lambda=50), rpois(3,lambda=100),rep(0,1),rpois(2,lambda=500)),
+               H = c(rep(0,6),rpois(5,lambda=100),0),
+               I = c(rep(0,6),rpois(5,lambda=50),0),
+               J = c(rep(0,7),rpois(4,lambda=200),0)
+    ) %>%
+    as.matrix()
+colnames(B) <- paste0("HOSP_",colnames(B))
+# force geo_8 to be a small monopoly from the perspective of the ZIP
+B[8,] = c(rep(0,9),25)
+rownames(B) <- paste0("GEO_",1:12)
+```
+
+```{r}
+G <- get_bipartite_graph(B)
+B_z <- B %>% create_unipartite_adjacency(type = "geo")
+B_j <- B %>% create_unipartite_adjacency(type = "firm")
+G <- get_bipartite_graph(B)
+B_z <- B %>% create_unipartite_adjacency(type = "geo")
+B_j <- B %>% create_unipartite_adjacency(type = "firm")
+
+market_z <- B_z %>% detect_markets(B=B,type = "geo")
+#market_z$dendro %>% ggdendrogram(rotate = FALSE)
+market_j <- B_j %>% detect_markets(B=B,type = "firm")
+#market_j$dendro %>% ggdendrogram(rotate = FALSE)
+df_means <- 
+    market_j$hhi %>% 
+    group_by(level) %>% 
+    summarise(mean_hhi = weighted.mean(hhi,w = .data$N))
+
+# Analyze current market
+res <- B %>% analyze_market()
+
+# Analyze all potential pairwise mergers
+mergers <- 
+    expand.grid(colnames(B), colnames(B)) %>% 
+    filter(Var1 != Var2) %>% 
+    rowwise() %>% 
+    mutate(pair = paste0(sort(c(Var1,Var2)),collapse="")) %>% 
+    group_by(pair) %>% 
+    filter(row_number()==1) %>% 
+    ungroup() %>% 
+    mutate(id = row_number()) %>% 
+    group_by(id,Var1,Var2,pair) %>% 
+    nest() %>% 
+    mutate(hhi = map2(Var1,Var2,~({
+        merged <- c(.x,.y)
+        B_same <- B[,-which(colnames(B) %in% merged)]
+        B_new <- apply(B[,which(colnames(B) %in% merged)],1,sum)
+        B_merged <- cbind(B_same,B_new)
+        colnames(B_merged) <- c(colnames(B_same),paste0(merged,collapse ="_"))
+        res <- B_merged %>% analyze_market()
+        res$hhi
+    }))) %>% 
+    unnest(cols=c(hhi))
+```
+
+```{r, echo = FALSE}
+B %>% ggmatrix()
+```
+
+# Market Detection
+
+## Firm-Centered Markets
+
+We begin by constructing the unipartite (firm-firm) matrix. 
+
+```{r}
+B_j %>% ggmatrix()
+```
+
+The diagonal of this matrix is simply the total volume. The off-diagonal elements tell us, for a given hospital (row), the total number of its patients who are drawn from similar geographies as the paired hospital (column). 
+
+Take the first row, for example. Cell [1,1] tells us Hospital A has a total volume of 23 patients. Cell [1,2] tells us that all 23 of Hospital A's patients are drawn from geographies from which Hospital B also draws its patients. By comparison, only 12 of Hospital A's patients are drawn from common geographies as Hospital C. 
+
+We can verify all this by looking at the bipartite adjacency matrix. Hospital A draws 11 patients from GEO_1 and 12 from GEO_2. Hospital C's catchment area includes GEO_2, GEO_3, GEO_4, GEO_5, and GEO_6. There is one area of overlap (GEO_2) and from Hospital A's perspective 12 patients are drawn from this area. Alternatively, when pairing Hospital C and Hospital A (cell [3,1]) we see that 81 of Hospital C's 481 total patients are drawn from common geographies with Hospital A. 
+
+We can also normalize the matrix:
+
+```{r}
+B_j %>% ggmatrix(normalize = TRUE)
+```
+
+```{r}
+set.seed(123)
+tmp <- market_j$G %>%  igraph::simplify(., remove.loops = TRUE)
+E(tmp)$weight_rs <- scales::rescale(E(tmp)$weight,to=c(1,20))
+E(tmp)$arrow.mode="-"
+tmp %>% plot(layout = layout_with_fr,edge.width=E(tmp)$weight_rs)
+```
+
+```{r}
+p_dendro <- 
+    res$market_j$dendro  %>% ggdendrogram(rotate=TRUE) +
+    scale_y_continuous(limits = c(0,res$market_j$max_height), breaks = seq(0,res$market_j$max_height,1)) +
+    labs(x = "Market clustering level", 
+         y = "Firm ID") 
+p_dendro
+``` 
+
+```{r}
+p_hhi <- 
+    res$market_j$hhi %>% 
+    ggplot(aes(x = level, y = jitter(hhi)), guide = FALSE) + 
+    #geom_point(aes(size = N, group = market, colour =factor(market)), guide =FALSE) +
+    theme_ipsum() +
+    ggsci::scale_color_aaas(name="") +
+    theme(legend.position = 'none') +
+    scale_y_continuous(limits = c(0,10000), breaks = seq(0,10000,2000)) +
+    geom_line(data = res$hhi, aes(x = level, y = mean_hhi),lwd=1) +
+    scale_x_continuous(limits = c(0,res$market_j$max_height), breaks = seq(0,res$market_j$max_height,1)) +
+    labs(x = "Market clustering level", 
+         y = "HHI") 
+p_hhi
+```
+

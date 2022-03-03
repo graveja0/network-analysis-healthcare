@@ -8,6 +8,45 @@ split_into_groups_of_n <- function(x,n) {
         column_to_rownames(var = "x")
 }
 
+ggmatrix <- function(B, normalize = FALSE) {
+    if (!normalize) {
+        B %>% 
+            data.frame() %>% 
+            rownames_to_column(var = "geography") %>% 
+            gather(hospital,weight,-geography) %>% 
+            mutate(geography = factor(geography, levels = rev(rownames(B)))) %>% 
+            mutate(hospital = factor(hospital, levels = colnames(B))) %>% 
+            ggplot(aes(x = hospital, y = geography)) + 
+            geom_tile(aes(fill = weight),alpha = 0.5, colour = "black") + 
+            scale_fill_gradient(low = "white", high = scales::muted("red")) + 
+            geom_text(aes(label = round(weight,0)))+
+            theme_tufte() +
+            labs(x = "",y ="") +
+            theme(legend.position = "none") +
+            scale_x_discrete(position = "top") +
+            theme(axis.ticks = element_blank())  
+    } else {
+        tmp <- diag(1/diag(B)) %*% B
+        rownames(tmp) <- rownames(B) 
+        
+        tmp %>% 
+            data.frame() %>% 
+            rownames_to_column(var = "geography") %>% 
+            gather(hospital,weight,-geography) %>% 
+            mutate(geography = factor(geography, levels = rev(rownames(B)))) %>% 
+            mutate(hospital = factor(hospital, levels = colnames(B))) %>% 
+            ggplot(aes(x = hospital, y = geography)) + 
+            geom_tile(aes(fill = weight),alpha = 0.5, colour = "black") + 
+            scale_fill_gradient(low = "white", high = scales::muted("red")) + 
+            geom_text(aes(label = round(weight,2)))+
+            theme_tufte() +
+            labs(x = "",y ="") +
+            theme(legend.position = "none") +
+            scale_x_discrete(position = "top") +
+            theme(axis.ticks = element_blank())  
+    }
+    
+}
 get_aws_files <- function(project_bucket = "vumc.graves.networks.proj", prefix = "") {
     get_bucket(project_bucket, prefix = prefix) %>%
         transpose() %>%
@@ -395,5 +434,175 @@ get_inflow_hhi <- function(G, collapse = FALSE) {
     
     k_j <- apply(B,2,sum)
     sum((100*(k_j/sum(k_j)))^2)
+}
+
+# Step 1: Outflow HHI
+get_outflow_hhi <- function(B) {
+    # Vectorized volume by geography and firm
+    k_z <- apply(B,1,sum); names(k_z)  = rownames(B)
+    k_j <- apply(B,2,sum); names(k_j) = colnames(B)
+    
+    # Market share matrix. 
+    S_z <- diag(1/k_z) %*% B
+    colnames(S_z) = colnames(B); rownames(S_z) = rownames(B)
+    
+    # Outflow HHI
+    HHI_out <- apply( 100* S_z * 100 *S_z,1,sum); names(HHI_out) <- rownames(B)
+    data.frame(id = names(HHI_out), n = k_z, outflow_hhi = HHI_out )  
+}
+
+get_bipartite_graph <- function(B) {
+    
+    # Vectorized volume by geography and firm
+    k_z <- apply(B,1,sum); names(k_z)  = rownames(B)
+    k_j <- apply(B,2,sum); names(k_j) = colnames(B)
+    
+    G_ <- 
+        graph.incidence(B, weighted=TRUE) 
+    
+    G <- 
+        G_ %>% 
+        as_tbl_graph() %>% 
+        activate(nodes) %>% 
+        mutate(type = ifelse(type==TRUE, "hospital","geography")) %>% 
+        mutate(volume = c(k_j,k_z)[name]) 
+    
+    out <- list(G_ = G_, G = G)
+    return(out)
+}
+create_unipartite_adjacency <- function(B, type ) {
+    if (type== "geo") {
+        X <- B %*% t(B>0) 
+        return(X)
+        #return(t(lower.tri(X)*X) + lower.tri(X) * X + diag(diag(X)))
+    }
+    
+    if (type=="firm") {
+        X <- t(B>0) %*% B %>% t()
+        return(X)
+        #return(t(lower.tri(X)*X) + lower.tri(X) * X + diag(diag(X)))
+    }
+}
+detect_markets <- function(B,B_,type) {
+    if (type=="geo") {
+        
+        G_ <- 
+            graph_from_adjacency_matrix(B_, weighted=TRUE) 
+        
+        market <- walktrap.community(G_)
+        dendro <- as.dendrogram(market) 
+        dendro_plot <- dendro %>% ggdendrogram(rotate = FALSE) 
+        max_height <-ggplot_build(dendro_plot)$data[[2]]$y[1]
+        markets <- 0:max_height %>% 
+            map(~(cut_at(market,steps = .x) %>% 
+                      set_names(colnames(B_)) %>% 
+                      data.frame() %>% 
+                      set_names(c("market")) %>% 
+                      rownames_to_column(var = "name") %>% 
+                      mutate(level = .x))) %>% 
+            bind_rows()
+        df_cluster_hhi <- 
+            markets %>% 
+            group_by(level,market) %>% 
+            nest() %>% 
+            mutate(B = map(data,~({
+                B[.x$name,] }))) %>% 
+            ungroup() %>% 
+            mutate(N = map(B,~(sum(.x)))) %>% 
+            mutate(hhi = map(B,~({
+                if (is.null(dim(.x))) {
+                    B_ <- as.matrix(.x) %>% t() 
+                    k_z <- apply(B_,1,sum); names(k_z)  = rownames(B_)
+                    S_z = B_/k_z
+                    hhi_z <- apply( 100* S_z * 100 *S_z,1,sum); names(hhi_z) <- rownames(B_)
+                    hhi_z
+                } else {
+                    B_ <- as.matrix(.x)
+                    # Vectorized volume by geography and firm
+                    k_z <- apply(B_,1,sum); names(k_z)  = rownames(B_)
+                    # Market share matrix. 
+                    S_z <- diag(1/k_z) %*% B_
+                    colnames(S_z) = colnames(B_); rownames(S_z) = rownames(B_)
+                    # Outflow HHI
+                    hhi_z <- apply( 100* S_z * 100 *S_z,1,sum); names(hhi_z) <- rownames(B_)
+                    weighted.mean(hhi_z,w = k_z)
+                }
+                
+            }))) %>% 
+            select(level,market,hhi,N) %>% 
+            unnest(cols=c(hhi,N)) %>% 
+            mutate(market = as.numeric(paste0(market))) %>% 
+            mutate(level = as.numeric(paste0(level)))
+        out <- list(market_modularitymax = market, 
+                    markets = markets,
+                    dendro = dendro,
+                    max_height = max_height, 
+                    hhi = df_cluster_hhi,
+                    G = G_)
+    } else if (type=="firm") {
+        G_j_ <- 
+            graph_from_adjacency_matrix(B_, weighted=TRUE) 
+        
+        firm_market <- walktrap.community(G_j_)
+        firm_market_dendro <- as.dendrogram(firm_market) 
+        firm_market_dendro_plot <- firm_market_dendro %>% ggdendrogram(rotate = TRUE)
+        firm_max_height <-ggplot_build(firm_market_dendro_plot)$data[[2]]$y[1]
+        firm_markets <- 0:firm_max_height %>% 
+            map(~(cut_at(firm_market,steps = .x) %>% 
+                      set_names(colnames(B_)) %>% 
+                      data.frame() %>% 
+                      set_names(c("market")) %>% 
+                      rownames_to_column(var = "name") %>% 
+                      mutate(level = .x))) %>% 
+            bind_rows()
+        df_cluster_hhi_firm <- 
+            firm_markets %>% 
+            group_by(level,market) %>% 
+            nest() %>% 
+            mutate(B = map(data,~({
+                tmp <- B[,.x$name]  %>% as.matrix()
+                colnames(tmp) <- .x$name
+                tmp}))) %>% 
+            ungroup() %>% 
+            mutate(N = map(B,~(sum(.x)))) %>% 
+            mutate(hhi = map(B,~({
+                
+                B_ <- as.matrix(.x)
+                # Vectorized volume by geography and firm
+                k_j <- apply(B_,2,sum); names(k_j)  = colnames(B_)
+                sum((100*(k_j/sum(k_j)))^2)
+                
+            }))) %>% 
+            select(level,market,hhi,N) %>% 
+            unnest(cols=c(hhi,N)) %>% 
+            mutate(market = as.numeric(paste0(market))) %>% 
+            mutate(level = as.numeric(paste0(level)))
+        out <- list(market_modularitymax = firm_market, 
+                    markets = firm_markets,
+                    dendro = firm_market_dendro,
+                    max_height = firm_max_height, 
+                    hhi = df_cluster_hhi_firm,
+                    G = G_j_)
+    }
+    
+    
+    
+    return(out)
+}
+analyze_market <- function(B) {
+    G <- get_bipartite_graph(B)
+    B_z <- B %>% create_unipartite_adjacency(type = "geo")
+    B_j <- B %>% create_unipartite_adjacency(type = "firm")
+    
+    market_z <- B_z %>% detect_markets(B=B,type = "geo")
+    #market_z$dendro %>% ggdendrogram(rotate = FALSE)
+    market_j <- B_j %>% detect_markets(B=B,type = "firm")
+    #market_j$dendro %>% ggdendrogram(rotate = FALSE)
+    df_means <- 
+        market_j$hhi %>% 
+        group_by(level) %>% 
+        summarise(mean_hhi = weighted.mean(hhi,w = .data$N))
+    out <- list(G = G, market_z = market_z, market_j = market_j, hhi = df_means)
+    return(out)
 }
 
