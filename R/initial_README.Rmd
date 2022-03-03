@@ -1,0 +1,646 @@
+---
+title: "A Network Analytic Approach to Analyzing Health Care Markets"
+output:
+  html_document: default
+  pdf_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+# Gaynor et al paper 
+    #https://faculty.wharton.upenn.edu/wp-content/uploads/2014/09/46_Competition_in_Health_Care_Markets.pdf
+    
+source("~/auth-aws.r")
+Sys.setenv("AWS_DEFAULT_REGION" = "us-east-2")
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(cache = FALSE)
+```
+
+```{r load libraries, echo = FALSE, cache=FALSE}
+libraries_needed <- c("sf",
+                      "tidyverse",
+                      "aws.s3",
+                      "furrr",
+                      "foreach",
+                      "tictoc",
+                      "here",
+                      "igraph",
+                      "ggraph",
+                      "tidygraph",
+                      "gt",
+                      "matrixStats",
+                      "knitr",
+                      "glue",
+                      "usethis",
+                      "readr",
+                      "data.table",
+                      "dtplyr",
+                      "conflicted",
+                      "usethis",
+                      "glue",
+                      "fastDummies",
+                      "patchwork",
+                      "magrittr",
+                      "flyio",
+                      "ggthemes",
+                      "ggsci",
+                      "hrbrthemes",
+                      "ggrepel")
+x <- lapply(libraries_needed, require, character.only = TRUE)
+# Take care of package conflicts
+conflict_prefer("filter", "dplyr")
+conflict_prefer("count","dplyr") 
+conflict_prefer("transpose", "purrr")
+
+markets_project_bucket = "health-care-markets"
+networks_project_bucket = "vumc.graves.networks.proj"
+flyio_set_datasource("s3")
+flyio::flyio_set_bucket(markets_project_bucket)
+
+get_aws_files <- function(project_bucket = "vumc.graves.networks.proj", prefix = "") {
+  get_bucket(project_bucket, prefix = prefix) %>%
+    transpose() %>%
+    purrr::pluck("Key") %>%
+    unlist() %>%
+    tbl_df()
+}
+shapefiles <- get_aws_files(project_bucket = markets_project_bucket, prefix = "tidy-mapping-files") 
+
+states <- c(
+  "AK",    "AL",    "AR",    "AZ",    "CA",    "CO",    "CT",    "DC",    "DE",    
+  "FL",    "GA",    "HI",    "IA",    "ID",    "IL",    "IN",    "KS",    "KY",    
+  "LA",    "MA",    "MD",    "ME",    "MI",    "MN",    "MO",    "MS",    "MT",    
+  "NC",    "ND",    "NE",    "NH",    "NJ",    "NM",    "NV",    "NY",    "OH",    
+  "OK",    "OR",    "PA",    "RI",    "SC",    "SD",    "TN",    "TX",    "UT",    
+  "VA",    "VT",    "WA",    "WI",    "WV",    "WY"
+)
+
+source(here("R/shared-functions.r"))
+
+# tn_cities_xy <- read_rds("data/xy-coords-tn-cities.rds") # constructed in R/get-city-coordinates.r
+
+```
+
+# 1. Construct Shapefile
+
+```{r}
+target_area <- c("TN04")
+area_type <- "rating"
+
+target_area = "47187" #"47037"
+area_type = "county"
+
+
+    
+    db1 <- 
+        sf_full %>% ggplot() + geom_sf(alpha=0) + geom_sf(data = sf, fill = "black") + theme_map() +
+         labs(title = "Target Area and Contiguous Areas",
+         subtitle = glue("{target_area}")) +
+        theme(legend.position = "none"); db1
+    
+    
+    #####################################################################
+    # Find the ZIPs with population-weighted centroids within this area
+    #####################################################################
+    
+    sf_zip_cent <- # Source: https://mcdc.missouri.edu/applications/geocorr2014.html (2022-02-10)
+        read.csv(here("data/zip-population-centroids/geocorr2014_2204104231.csv"),skip=1) %>% 
+        janitor::clean_names() %>% 
+        as_tibble() %>% 
+        # Some ZIPs straddle states; get the weighted centroid again.
+        group_by(zip_census_tabulation_area) %>% 
+        summarise_at(vars(wtd_centroid_latitude_degrees,wtd_centroid_w_longitude_degrees),
+                     ~weighted.mean(.,w = .data$total_population_2010 )) %>%
+        select(zip_code = zip_census_tabulation_area, 
+               y = wtd_centroid_latitude_degrees, 
+               x =  wtd_centroid_w_longitude_degrees) %>% 
+        st_as_sf(coords = c("x","y"), crs = 4326) %>% 
+        bind_cols(st_coordinates(.) %>% as.tibble() %>% set_names(c("x","y")))  %>% 
+        mutate(zip_code = str_pad(zip_code,width = 5, side ="left",pad = "0"))
+    
+    sf_zip_cent <- 
+        sf_zip_cent %>% 
+        left_join(
+           st_within(sf_zip_cent,sf_) %>% 
+            data.frame() %>% 
+            right_join(sf_zip_cent %>% data.frame() %>% select(zip_code) %>% mutate(row.id = row_number()),"row.id") %>% 
+            left_join(sf_ %>% data.frame() %>% select({{idname}}) %>% mutate(col.id = row_number()),"col.id") %>% 
+            select(zip_code,{{idname}}) %>% 
+            as_tibble()
+        ,"zip_code") 
+        
+    
+    zips_in_total_area <- sf_zip_cent$zip_code[!is.na(as.numeric(st_within(sf_zip_cent,sf_full)))] 
+
+    sf_zip_total <- 
+      read_sf(here("../../health-care-markets/output/tidy-mapping-files/zcta/01_zcta-shape-file.shp")) %>% 
+      st_transform(crs = 4326) %>% 
+      select(zip_code = zcta5ce10, geometry) %>% 
+      filter(zip_code %in% zips_in_total_area) %>% 
+      left_join(sf_zip_cent %>% data.frame() %>% ungroup() %>% select(-geometry),"zip_code")
+    
+    db2 <- db1 + geom_sf(data = sf_zip_total, aes(colour="red"), alpha=0)  + 
+        ggtitle("Adding in ZIP codes with population-weighted centroids in the area"); db2
+    
+    zips_in_area <- sf_zip_cent$zip_code[!is.na(as.numeric(st_within(sf_zip_cent,sf)))] 
+    
+    sf_zip <- 
+      read_sf(here("../../health-care-markets/output/tidy-mapping-files/zcta/01_zcta-shape-file.shp")) %>% 
+      st_transform(crs = 4326) %>% 
+      select(zip_code = zcta5ce10, geometry) %>% 
+      filter(zip_code %in% zips_in_area) %>% 
+      left_join(sf_zip_cent %>% data.frame() %>% ungroup() %>% select(-geometry),"zip_code")
+    
+     db3 <- db1 + geom_sf(data = sf_zip, aes(colour="red"), alpha=0)  + 
+        ggtitle("Adding in ZIP codes with population-weighted centroids in the area"); db3
+    
+
+    ####################################################################
+    # Find the cities within the area
+    #####################################################################
+    
+     df_cities_ <- # Source: https://simplemaps.com/data/us-cities : NOTE: per licence, must cite. 
+         read.csv(here("data/simplemaps_uscities_basicv1.74/uscities.csv")) %>% 
+         janitor::clean_names() %>% 
+         as_tibble() %>% 
+         st_as_sf(coords = c("lng","lat"), crs = 4326) %>% 
+         bind_cols(st_coordinates(.) %>% as_tibble() %>% set_names(c("x","y")))
+     
+     cities_within_area <- 
+        df_cities_$id[!is.na(as.numeric(st_within(df_cities_,sf_full)))]  %>% 
+        as_tibble() %>% 
+        filter(value !="") %>%   
+        pull(value)
+     
+     minimum_population <- 25000
+     
+     sf_cities <- 
+         df_cities_ %>% 
+         filter(id %in% cities_within_area) %>% 
+         arrange(desc(density)) %>% 
+         filter(population > minimum_population)
+     
+    db_cities <- 
+        sf_full %>% ggplot() + geom_sf(alpha=0) + geom_sf(data = sf, fill = "black",alpha = 0.2) + theme_map() +
+        labs(title = "Cities in Area",
+        subtitle = glue("{target_area}")) +
+        theme(legend.position = "none") + 
+        geom_sf(data = sf_cities) + 
+        geom_text_repel(data = sf_cities %>% select(x,y,city) %>% unique(), aes(x = x, y = y, hjust=0, label = city)) ; db_cities
+
+
+```
+
+# 2. Identify Physicians and Facilities Within the Area
+
+## Hospitals
+
+```{r}
+aha_files <- c(
+  "2018" = "../../Research-AHA_Data/data/aha/annual/raw/2018/ASDB FY 2018/COMMA/ASPUB18.CSV"
+)
+
+df_node_hosp_ <- 
+  aha_files %>% 
+  map(~(
+    data.table::fread(here(.x)) %>% 
+      janitor::clean_names() %>% 
+      filter(mstate %in% states) %>% 
+      mutate(system_id = ifelse(!is.na(sysid),paste0("SYS_",sysid),id)) %>% 
+      filter(serv==10))) %>% 
+  map(~rename_in_list(x = .x, from = "hcfaid", to = "mcrnum")) %>% 
+  map(~(.x %>% 
+          select(mname, id, mcrnum , latitude = lat, longitude = long, hrrnum = hrrcode, 
+                 hsanum = hsacode, admtot, system_id, mloczip, sysname,
+                 fips_code=fcounty,mloccity ) %>% 
+          mutate(hrrnum = paste0(hrrnum)) %>% 
+          mutate(hsanum = paste0(hsanum)) %>% 
+          mutate(prvnumgrp = str_pad(mcrnum,width = 6, pad="0")) %>% 
+          mutate(hosp_zip_code = str_sub(mloczip,1,5)) %>% 
+          mutate(longitude = as.numeric(paste0(longitude))) %>% 
+          mutate(latitude = as.numeric(paste0(latitude))) %>% 
+          filter(!is.na(longitude) & !is.na(latitude)) %>% 
+        as_tibble()
+  )) %>% 
+  set_names(names(aha_files)) %>% 
+  bind_rows(.id = "aha_year") %>% 
+  as_tibble() %>% 
+  ungroup() %>% 
+  select(id = mcrnum, x= longitude,  y = latitude, admtot,mname,sysname) %>% 
+  mutate(type = "hospital") %>% 
+  st_as_sf(coords = c("x", "y"), crs = 4326) %>% 
+  mutate(name = ifelse(sysname=="" | is.na(sysname), mname, sysname))
+
+df_node_hosp_ <- 
+    df_node_hosp_ %>% 
+     left_join(
+           st_within(df_node_hosp_,sf_) %>% 
+            data.frame() %>% 
+            right_join(df_node_hosp_ %>% data.frame() %>% select(id) %>% mutate(row.id = row_number()),"row.id") %>% 
+            left_join(sf_ %>% data.frame() %>% select({{idname}}) %>% mutate(col.id = row_number()),"col.id") %>% 
+            select(id,{{idname}}) %>% 
+            as_tibble()
+        ,"id") 
+
+hospitals_within_area <- 
+    df_node_hosp_$id[!is.na(as.numeric(st_within(df_node_hosp_,sf_full)))]  %>% 
+    as_tibble() %>% 
+    filter(value !="") %>%   
+    pull(value)
+
+df_node_hosp <- 
+    df_node_hosp_ %>% 
+    filter(id %in% hospitals_within_area) %>% 
+    bind_cols(st_coordinates(.) %>% as_tibble() %>% set_names(c("x","y"))) 
+    
+db_hosp_name <-
+    sf_full %>% ggplot() + geom_sf(alpha=0) + geom_sf(data = sf, fill = "black",alpha = 0.2) + theme_map() +
+    labs(title = "Target Area and Contiguous Areas",
+    subtitle = glue("{target_area}")) +
+    theme(legend.position = "none") +
+    geom_sf(data = df_node_hosp) +
+    geom_text_repel(data = df_node_hosp %>% select(x,y,mname) %>% unique(), aes(x = x, y = y, hjust=0, label = mname)); db_hosp_name
+
+db_hosp <- 
+    sf_full %>% ggplot() + geom_sf(alpha=0) + geom_sf(data = sf, fill = "black",alpha = 0.2) + theme_map() +
+    labs(title = "Location of Hospitals",
+    subtitle = glue("{target_area}")) +
+    theme(legend.position = "bottom") + 
+    scale_fill_continuous(type="viridis", name= "Hospitals") +
+    geom_hex(data = df_node_hosp, aes(x=x,y=y),bins=70)  +
+    #geom_sf(data = sf_cities, colour = "darkblue",alpha=0.5) + 
+    geom_text_repel(data = sf_cities  %>% select(x,y,city) %>% unique(), aes(x = x, y = y, hjust=0, label = city),colour = "darkblue",alpha=0.25); db_hosp
+ 
+```
+
+## Physicians
+
+```{r}
+# These are all the NPIs in the US
+df_npi_ <- 
+    #read_rds("~/Desktop/geocoded-physician-and-hospital-locations.rds") %>% 
+    s3readRDS(object = "data/geocoded-physician-and-hospital-locations/2019/geocoded-physician-and-hospital-locations.rds",
+              bucket = networks_project_bucket) %>%
+    select(npi,specialty_group,loc_x,loc_y) %>% 
+    filter(specialty_group %in% c("cardiology","primcare", "oncology","hospital")) %>% 
+    group_by(npi) %>% 
+    filter(row_number()==1) %>% 
+    st_as_sf(coords = c("loc_x", "loc_y"), crs = 4326) 
+
+df_npi_ <- 
+    df_npi_ %>% 
+    left_join(
+               st_within(df_npi_,sf_) %>% 
+                data.frame() %>% 
+                right_join(df_npi_ %>% data.frame() %>% select(npi) %>% mutate(row.id = row_number()),"row.id") %>% 
+                left_join(sf_ %>% data.frame() %>% select({{idname}}) %>% mutate(col.id = row_number()),"col.id") %>% 
+                select(npi,{{idname}}) %>% 
+                as_tibble()
+            ,"npi")
+
+# Restrict to those only located in the TN04 rating area
+df_npi <- 
+    df_npi_[which(!is.na(as.numeric((st_within(df_npi_,sf_full))))),] %>% 
+    bind_cols(st_coordinates(.) %>% as_tibble() %>% set_names(c("x","y")))
+
+db_pcp <- 
+    sf_full %>% ggplot() + geom_sf(alpha=0) + geom_sf(data = sf, fill = "black",alpha = 0.2) + theme_map() +
+    labs(title = "Location of Primary Care Physicians",
+    subtitle = glue("{target_area}")) +
+    theme(legend.position = "bottom") + 
+    scale_fill_continuous(type="viridis", name= "Physicians") +
+    geom_hex(data = df_npi %>% filter(specialty_group=="primcare"), aes(x=x,y=y),bins=50)  +
+    #geom_sf(data = sf_cities, colour = "darkblue",alpha=0.5) + 
+    geom_text_repel(data = sf_cities  %>% select(x,y,city) %>% unique(), aes(x = x, y = y, hjust=0, label = city),colour = "darkblue",alpha=0.25)
+     
+db_oncology <- 
+    sf_full %>% ggplot() + geom_sf(alpha=0) + geom_sf(data = sf, fill = "black",alpha = 0.2) + theme_map() +
+    labs(title = "Location of Oncologists",
+    subtitle = glue("{target_area}")) +
+    theme(legend.position = "bottom") + 
+    scale_fill_continuous(type="viridis", name= "Physicians") +
+    geom_hex(data = df_npi %>% filter(specialty_group=="oncology"), aes(x=x,y=y),bins=50)  +
+    #geom_sf(data = sf_cities, colour = "darkblue",alpha=0.5) + 
+    geom_text_repel(data = sf_cities  %>% select(x,y,city) %>% unique(), aes(x = x, y = y, hjust=0, label = city),colour = "darkblue",alpha=0.25)
+     
+ db_cardiology <- 
+    sf_full %>% ggplot() + geom_sf(alpha=0) + geom_sf(data = sf, fill = "black",alpha = 0.2) + theme_map() +
+    labs(title = "Location of Cardiologists",
+    subtitle = glue("{target_area}")) +
+    theme(legend.position = "bottom") + 
+    scale_fill_continuous(type="viridis", name= "Physicians") +
+    geom_hex(data = df_npi %>% filter(specialty_group=="cardiology"), aes(x=x,y=y),bins=50)  +
+    #geom_sf(data = sf_cities, colour = "darkblue",alpha=0.5) + 
+    geom_text_repel(data = sf_cities  %>% select(x,y,city) %>% unique(), aes(x = x, y = y, hjust=0, label = city),colour = "darkblue",alpha=0.25)
+ 
+ (db_hosp + db_pcp) / (db_oncology + db_cardiology)
+
+```
+
+# 3. Construct Edge Lists
+
+## Clinical Edge Lists
+
+```{r}
+# Hospital NPI - Medicare ID Crosswalk
+
+df_hosp_xw <- # NPI to AHA/Medicare ID crosswalk from Penn/JHU
+    s3readRDS(object = "data/penn-xw-api/general-acute-care-hospital-npi-crosswalk.rds",
+              bucket = networks_project_bucket, check_region = F) %>% 
+    mutate(npi = paste0(npi))
+
+# Crosswalking of NPI to PRVNUMGRP at the national level
+df_npi_hosp <-
+    df_npi_ %>% 
+    inner_join(df_hosp_xw,"npi") %>% 
+    data.frame() %>% 
+    select(npi,prvnumgrp,aha_id) %>% 
+    as_tibble() %>% 
+    group_by(npi) %>% 
+    mutate(n = n()) %>% 
+    ungroup() 
+
+if (!file.exists(here(glue("output/edge-lists/edge_list_{paste0(target_area,collapse = '-')}.rds")))) {
+    yy = 2017
+    edge_list_npi <- # Careset raw edge list
+        data.table::fread(here("../data/careset/DocGraph_Hop_Teaming_2017/DocGraph_Hop_Teaming_2017.csv")) %>% 
+        mutate(from_npi = as.character(from_npi),
+               to_npi = as.character(to_npi)) %>% 
+        as.data.table()
+    setkey(edge_list_npi,from_npi)  
+    
+    tmp <-  
+        df_npi %>% 
+        data.frame() %>% 
+        select(from_npi = npi,from_type = specialty_group) %>% 
+        data.table() 
+    setkey(tmp,from_npi)
+    
+    tmp2 <-  
+        # This uses a national scope for the "to" column
+        df_npi_ %>% 
+        data.frame() %>% 
+        select(to_npi = npi,to_type = specialty_group) %>% 
+        data.table() 
+    setkey(tmp2,to_npi)
+    
+    edge_list_careset <- 
+        edge_list_npi[tmp,nomatch=0] 
+    setkey(edge_list_careset, to_npi)
+    edge_list_careset <- 
+        edge_list_careset[tmp2,nomatch=0] %>% 
+        as_tibble()
+
+    # Roll-up hosptial edges to the medicare provider level    
+    tmp3 <- 
+        df_npi_hosp %>% 
+        select(from_npi = npi,prvnumgrp) %>% 
+        unique() %>% 
+        as_tibble()
+    
+    tmp4 <- 
+        df_npi_hosp %>% 
+        select(to_npi = npi,prvnumgrp) %>% 
+        unique() %>% 
+        as_tibble()
+
+    edge_list_final <- 
+        edge_list_careset %>% 
+        left_join(tmp3,"from_npi") %>% 
+        mutate(from_npi = ifelse(!is.na(prvnumgrp) & from_type=="hospital", prvnumgrp,from_npi)) %>% 
+        group_by(from_npi,to_npi,from_type,to_type) %>% 
+        mutate(average_day_wait  = weighted.mean(average_day_wait, w = transaction_count)) %>% 
+        summarise(patient_count = sum(patient_count), 
+                  transaction_count = sum(transaction_count),
+                  average_day_wait = mean(average_day_wait)) %>% 
+        left_join(tmp4,"to_npi") %>% 
+        mutate(to_npi = ifelse(!is.na(prvnumgrp) & from_type=="hospital", prvnumgrp,to_npi)) %>% 
+        group_by(from_npi,to_npi,from_type,to_type) %>% 
+        mutate(average_day_wait  = weighted.mean(average_day_wait, w = transaction_count)) %>% 
+        summarise(patient_count = sum(patient_count), 
+                  transaction_count = sum(transaction_count),
+                  average_day_wait = mean(average_day_wait)) 
+        
+    edge_list_final %>% saveRDS(here(glue("output/edge-lists/edge_list_{paste0(target_area,collapse = '-')}.rds")))
+} 
+
+edge_list <- readRDS(here(glue("output/edge-lists/edge_list_{paste0(target_area,collapse = '-')}.rds")))
+
+```
+
+## Geographic Edge Lists
+
+```{r}
+# Created in R/read-and-tidy-cms-hospital-service-areas
+edge_list_geography <- 
+    read_rds(here("../../health-care-markets/output/hospital-county-patient-data/2018/hospital-zip-patient-data.rds")) %>% 
+    ## NOTE THIS WILL EXCLUDE HOSPITALS WELL OUTSIDE THE TOTAL AREA
+    filter(prvnumgrp %in% hospitals_within_area) %>% 
+    filter(zip_code %in%  zips_in_area) %>% 
+    select(from= zip_code, to = prvnumgrp, weight = total_cases)
+
+# Created in R/read-and-tidy-cms-hospital-service-areas
+
+# This one allows for counts of use well outside the mapped area; it's useful to get an accurate percentage of total care within the area vs. outside. 
+edge_list_total_geography <- 
+    read_rds(here("../../health-care-markets/output/hospital-county-patient-data/2018/hospital-zip-patient-data.rds")) %>% 
+    filter(zip_code %in%  zips_in_area) %>% 
+    select(from= zip_code, to = prvnumgrp, weight = total_cases)
+```
+
+## Trim Node List to Only Those in Edge Lists
+```{r}
+total_nodes <- 
+    data.frame(npi = unique(c(edge_list$to_npi,edge_list$from_npi,edge_list_geography$to))) %>% 
+    as_tibble()
+
+df_node <- 
+    df_npi_  %>% 
+        filter(specialty_group != "hospital") %>% 
+        bind_rows(
+             df_node_hosp_ %>% 
+             rename(npi = id)  %>% 
+             mutate(specialty_group = "hospital")
+        ) %>% 
+    inner_join(total_nodes,"npi")
+df_node <- 
+    df_node %>% 
+    bind_cols(st_coordinates(df_node) %>% data.frame() %>% select(x=X,y=Y))
+
+
+```
+
+## Visualize Edge Lists
+
+```{r}
+df_path_zip_hosp <- 
+    edge_list_geography %>% 
+    left_join(
+        sf_zip_cent %>% data.frame() %>% 
+            ungroup() %>% 
+            select(from = zip_code, from_x = x, from_y =y) %>% 
+            as_tibble() %>% mutate(from = as.character(paste0(from))) 
+        
+        ,"from"
+    ) %>% 
+    left_join(
+        df_node_hosp %>% 
+            data.frame() %>% 
+            select(to= id, to_x = x, to_y=y) %>% 
+            as_tibble() %>% mutate(to = as.character(paste0(to))), "to"
+    ) %>% 
+    inner_join(
+        df_node %>% 
+            rename(to = npi) %>% 
+            select(to,name),"to"
+    ) %>% 
+    mutate(name = factor(name))
+
+
+pct_flows_in_mapped_area <- 
+    edge_list_total_geography %>% 
+    left_join(df_node_hosp %>% data.frame() %>% ungroup() %>% select(to=id,to_area = {{idname}}),"to") %>% 
+    left_join(  sf_zip_cent %>% data.frame() %>% ungroup() %>%  select(from = zip_code, from_area = {{idname}}),"from") %>% 
+    filter(from_area %in% target_area) %>% 
+    mutate(within_mapped_area = as.integer(!is.na(to_area))) %>% 
+    mutate(to_area = ifelse(is.na(to_area),"outside_mapped_area",to_area)) %>% 
+    mutate(within = as.integer(from_area==to_area))  %>% 
+    group_by(within,within_mapped_area) %>% 
+    summarise(weight = sum(weight)) %>% 
+    ungroup() %>% 
+    mutate(pct = 100 * (weight / sum(weight))) 
+
+pct_flows_in_area <- pct_flows_in_mapped_area %>% filter(within==1 & within_mapped_area==1) %>% pull(pct)
+pct_addl_flows_in_mapped <- pct_flows_in_mapped_area %>% filter(within==0 & within_mapped_area==1) %>% pull(pct)
+pct_outside_flows <- pct_flows_in_mapped_area %>% filter(within==0 & within_mapped_area==0) %>% pull(pct)
+
+
+p_flows_zip_hosp <- 
+    sf_full %>% ggplot() + geom_sf(alpha=0) + geom_sf(data = sf, fill = "black",alpha = 0.1) + theme_map() +
+    labs(title = "Flows of FFS Medicare Patients to Area Hospitals",
+    subtitle = glue("{target_area}\n{round(pct_flows_in_area,1)}% of flows within target area\n{round(pct_addl_flows_in_mapped,1)}% additional in mapped area\n{round(pct_outside_flows,1)}% flow to outside mapped area")) +
+    theme(legend.position = "bottom") + 
+    #scale_fill_continuous(type="viridis", name= "Hospitals") +
+    #geom_hex(data = df_node_hosp, aes(x=x,y=y),bins=70)  +
+    #geom_sf(data = sf_cities, colour = "darkblue",alpha=0.5) + 
+    geom_text_repel(data = sf_cities  %>% select(x,y,city) %>% unique(), aes(x = x, y = y, hjust=0, label = city),colour = "darkblue",alpha=0.25) + 
+    geom_curve(data = df_path_zip_hosp, aes(x = from_x, y= from_y, xend = to_x, yend=to_y,size=weight, colour = name), 
+               curvature=-.2, alpha =0.1) + 
+    scale_colour_discrete(guide=FALSE) +
+    scale_size_continuous(guide=FALSE); p_flows_zip_hosp
+
+```
+
+```{r}
+
+threshold_for_minimum_within <- 0.5
+
+pct_flows_in_mapped_area_ <- 
+    edge_list %>% 
+    filter(from_type == "primcare" & to_type=="cardiology")  %>% 
+    inner_join(
+        df_node %>% data.frame() %>% ungroup() %>%  select(from_npi = npi, from_x = x, from_y = y, from_area = {{idname}}), "from_npi"
+    ) %>% 
+    inner_join(
+        df_node %>% data.frame() %>% ungroup() %>%  select(to_npi = npi, to_x = x, to_y = y, to_area = {{idname}}), "to_npi"
+    ) %>% 
+    filter(from_area %in% target_area) %>% 
+    mutate(within_mapped_area = as.integer(to_area %in%     contiguous)) %>% 
+    mutate(to_area = ifelse(is.na(to_area),"outside_mapped_area",to_area)) %>% 
+    mutate(within = as.integer(from_area==to_area)) %>% 
+    group_by(from_npi) %>% 
+    mutate(pct_within = sum(patient_count * within) / sum(patient_count)) %>% 
+    filter(pct_within >= threshold_for_minimum_within) 
+
+pcps_to_include <- unique(pct_flows_in_mapped_area_$from_npi)
+
+pct_flows_in_mapped_area <- 
+    pct_flows_in_mapped_area_ %>% 
+    group_by(within,within_mapped_area) %>% 
+    mutate(weight = patient_count) %>% 
+    summarise(weight = sum(weight)) %>% 
+    ungroup() %>% 
+    mutate(pct = 100 * (weight / sum(weight))) 
+
+pct_flows_in_area <- pct_flows_in_mapped_area %>% filter(within==1 & within_mapped_area==1) %>% pull(pct)
+pct_addl_flows_in_mapped <- pct_flows_in_mapped_area %>% filter(within==0 & within_mapped_area==1) %>% pull(pct)
+pct_outside_flows <- pct_flows_in_mapped_area %>% filter(within==0 & within_mapped_area==0) %>% pull(pct)
+
+
+df_path_pcp_card <- 
+    pct_flows_in_mapped_area_ %>% 
+    filter(within_mapped_area==1) %>% 
+    select(from = from_npi, to = to_npi,weight = patient_count, from_x, from_y, to_x, to_y)
+
+p_flows_pcp_card <- 
+    sf_full %>% ggplot() + geom_sf(alpha=0) + geom_sf(data = sf, fill = "black",alpha = 0.1) + theme_map() +
+    labs(title = "Clinical Ties Among PCPs and Cardiologists",
+    subtitle = glue("{target_area}\n{round(pct_flows_in_area,1)}% of flows within target area\n{round(pct_addl_flows_in_mapped,1)}% additional in mapped area\n{round(pct_outside_flows,1)}% flow to outside mapped area")) +
+    theme(legend.position = "bottom") + 
+    geom_text_repel(data = sf_cities  %>% select(x,y,city) %>% unique(), aes(x = x, y = y, hjust=0, label = city),colour = "darkblue",alpha=0.25) + 
+    geom_curve(data = df_path_pcp_card, aes(x = from_x, y= from_y, xend = jitter(to_x), yend= jitter(to_y),size=weight), 
+               curvature=-.2, alpha =0.1) + 
+    scale_size_continuous(guide=FALSE); p_flows_pcp_card
+```
+
+
+```{r}
+pct_flows_in_mapped_area_ <- 
+    edge_list %>% 
+    filter(from_type == "primcare" & to_type=="oncology")  %>% 
+    inner_join(
+        df_node %>% data.frame() %>% ungroup() %>%  select(from_npi = npi, from_x = x, from_y = y, from_area = {{idname}}), "from_npi"
+    ) %>% 
+    inner_join(
+        df_node %>% data.frame() %>% ungroup() %>%  select(to_npi = npi, to_x = x, to_y = y, to_area = {{idname}}), "to_npi"
+    ) %>% 
+    filter(from_area %in% target_area) %>% 
+    mutate(within_mapped_area = as.integer(to_area %in%     contiguous)) %>% 
+    mutate(to_area = ifelse(is.na(to_area),"outside_mapped_area",to_area)) %>% 
+    mutate(within = as.integer(from_area==to_area)) %>% 
+    group_by(from_npi) %>% 
+    mutate(pct_within = sum(patient_count * within) / sum(patient_count)) %>% 
+    filter(pct_within >= threshold_for_minimum_within) 
+
+pcps_to_include <- unique(pct_flows_in_mapped_area_$from_npi)
+
+pct_flows_in_mapped_area <- 
+    pct_flows_in_mapped_area_ %>% 
+    group_by(within,within_mapped_area) %>% 
+    mutate(weight = patient_count) %>% 
+    summarise(weight = sum(weight)) %>% 
+    ungroup() %>% 
+    mutate(pct = 100 * (weight / sum(weight))) 
+
+pct_flows_in_area <- pct_flows_in_mapped_area %>% filter(within==1 & within_mapped_area==1) %>% pull(pct)
+pct_addl_flows_in_mapped <- pct_flows_in_mapped_area %>% filter(within==0 & within_mapped_area==1) %>% pull(pct)
+pct_outside_flows <- pct_flows_in_mapped_area %>% filter(within==0 & within_mapped_area==0) %>% pull(pct)
+
+
+df_path_pcp_onc <- 
+    pct_flows_in_mapped_area_ %>% 
+    filter(within_mapped_area==1) %>% 
+    select(from = from_npi, to = to_npi,weight = patient_count, from_x, from_y, to_x, to_y)
+
+p_flows_pcp_onc <- 
+    sf_full %>% ggplot() + geom_sf(alpha=0) + geom_sf(data = sf, fill = "black",alpha = 0.1) + theme_map() +
+    labs(title = "Clinical Ties Among PCPs and Oncologists",
+    subtitle = glue("{target_area}\n{round(pct_flows_in_area,1)}% of flows within target area\n{round(pct_addl_flows_in_mapped,1)}% additional in mapped area\n{round(pct_outside_flows,1)}% flow to outside mapped area")) +
+    theme(legend.position = "bottom") + 
+    geom_text_repel(data = sf_cities  %>% select(x,y,city) %>% unique(), aes(x = x, y = y, hjust=0, label = city),colour = "darkblue",alpha=0.25) + 
+    geom_curve(data = df_path_pcp_card, aes(x = from_x, y= from_y, xend = jitter(to_x), yend= jitter(to_y),size=weight), 
+               curvature=-.2, alpha =0.1) + 
+    scale_size_continuous(guide=FALSE); p_flows_pcp_onc
+```
+
+# 4. Add Attribute Data
+
+```{r}
+
+```
+
+
+
