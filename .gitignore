@@ -1,0 +1,10 @@
+.Rproj.user
+.Rhistory
+.Rdata
+.httr-oauth
+.DS_Store
+ignore/
+manuscript/
+reference/
+README_cache/
+README_files/
