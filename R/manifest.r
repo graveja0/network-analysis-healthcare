@@ -29,7 +29,8 @@ libraries_needed <- c("sf",
                       "ggthemes",
                       "ggsci",
                       "hrbrthemes",
-                      "ggrepel")
+                      "ggrepel",
+                      "ggdendro")
 x <- lapply(libraries_needed, require, character.only = TRUE)
 
 x <- lapply(libraries_needed, require, character.only = TRUE)

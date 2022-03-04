@@ -1,16 +1,9 @@
-
-area_denom = "state"
-target_area = "county"
-collapse = TRUE
-
-# 0. Load manifest and shared functions
-source(here::here("R/manifest.r"))
-source(here("R/shared-functions.r"))
 shapefiles <- get_aws_files(project_bucket = markets_project_bucket, prefix = "tidy-mapping-files") 
 
 # 1. Load Shapefile and Common Data
 sf_ <- load_master_sf(area_denom)
-sf_target <- load_master_sf(target_area)
+sf_county <- load_master_sf("county")
+sf_cz <- load_master_sf("commuting-zone")
 source(here::here("R/load-common-data.r")) # Uses sf_ as input
 
 # 2. Calculate/Load Kessler-McClellan at the National Level (makes for an easier time later)
@@ -20,23 +13,58 @@ km_hospital <- read_rds(here(hospital_output_file))
 
 # 3. Get adjacency matrix
 source(here("R/get-adjacency-matrix.r"))
-B <- get_adjacency_matrix(target_area=application_area)
-B %>% write_rds(here(glue("output/adjacency-matrices/B-{application_area}")))
+B_county <- get_adjacency_matrix(
+                          application_area = application_area, 
+                          area_type="state", 
+                          row_type="county",
+                          collapse_to_system_level = TRUE ,
+                          system_radius = 100,
+                          minimum_market_share = 0.01,
+                          minimum_market_size = 25,
+                          km = km
+                          )
+B_county %>% write_rds(here(glue("output/adjacency-matrices/B-county-{application_area}")))
+
+B_cz<- get_adjacency_matrix(application_area = application_area, 
+                                 area_type="state", 
+                                 row_type="commuting-zone",
+                                 collapse_to_system_level = TRUE ,
+                                 system_radius = 100,
+                                 minimum_market_share = 0.01,
+                                 minimum_market_size = 25,
+                                 km = km
+)
+B_cz %>% write_rds(here(glue("output/adjacency-matrices/B-commuting-zone-{application_area}")))
 
 # 4. Market Concentration Measures
 source(here::here("R/calculate-concentration-measures.r"))
 df_hhi <- 
     suppressWarnings({
-                                    calculate_concentration_measures(
-                                        target_area = application_area,
-                                                        area_denom = area_denom,
-                                                        km = km_system,
-                                                        collapse_to_system_level = TRUE ,
-                                                        system_radius = 100,
-                                                        minimum_market_share = 0.01,
-                                                        minimum_market_size = 25)
+        calculate_concentration_measures(
+            B = B_county,
+            target_area = application_area,
+            area_denom = area_denom,
+            km = km_system,
+            collapse_to_system_level = TRUE ,
+            system_radius = 100,
+            minimum_market_share = 0.01,
+            minimum_market_size = 25)
         })
-df_hhi %>% write_rds(here(glue("output/hhi/hhi-{application_area}.rds")))
+df_hhi %>% write_rds(here(glue("output/hhi/hhi-county-{application_area}.rds")))
+
+df_hhi <- 
+    suppressWarnings({
+        calculate_concentration_measures(
+            B = B_cz,
+            target_area = application_area,
+            area_denom = area_denom,
+            km = km_system,
+            collapse_to_system_level = TRUE ,
+            system_radius = 100,
+            minimum_market_share = 0.01,
+            minimum_market_size = 25)
+    })
+df_hhi %>% write_rds(here(glue("output/hhi/hhi-commuting-zone-{application_area}.rds")))
 
 # ############
 # # SCRATCH

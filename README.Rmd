@@ -15,18 +15,21 @@ knitr::opts_chunk$set(warning = FALSE)
 knitr::opts_chunk$set(message = FALSE)
 knitr::opts_chunk$set(cache = FALSE)
 
-library(tidyverse)
-library(tidygraph)
-library(igraph)
-library(ggraph)
-library(ggdendro)
-library(hrbrthemes)
-library(patchwork)
-library(ggthemes)
-library(sf)
-library(glue)
-library(here)
-library(knitr)
+
+source(here::here("R/manifest.r"))
+
+# library(tidyverse)
+# library(tidygraph)
+# library(igraph)
+# library(ggraph)
+# library(ggdendro)
+# library(hrbrthemes)
+# library(patchwork)
+# library(ggthemes)
+# library(sf)
+# library(glue)
+# library(here)
+# library(knitr)
 set.seed(12345)
 source(here("R/shared-functions.r"))
 states <- c(
@@ -169,30 +172,40 @@ p_hhi
 # Application
 
 ```{r}
-
+application_year = "2015"
 application_area = "TN"
+area_denom = "state"  # The broadest area considered
+#target_area = "county" # 
+collapse_to_system_level = TRUE
 
-create_application = FALSE
-if (!file.exists(here(glue("output/adjacency-matrices/B-{application_area}")))) create_application =TRUE
-if (create_application) {
+create_application = TRUE
+#if (!file.exists(here(glue("output/adjacency-matrices/B-{application_area}")))) create_application =TRUE 
+#if (create_application) {
+
     source(here("R/01_construct-analytic-file.r"))
-}
+#}
 
 #df_hhi <- read_rds(here(glue("output/hhi/hhi-{application_area}.rds")))
 
-tmp <- read_rds(here::here(glue::glue("output/adjacency-matrices/B-{application_area}")))
+tmp <- read_rds(here::here(glue::glue("output/adjacency-matrices/B-county-{application_area}")))
 
 systems <- tmp$hospitals %>% pull(system_id) %>% unique()
 B <- tmp$G %>% get_collapsed_incidence_matrix(x = system_id)
-B <- B[,systems]
+B <- B[,intersect(colnames(B),systems)]
 labs <- tmp$hospitals %>% select(sysname,system_id) %>% unique() %>% pull(sysname)
 names(labs) <- tmp$hospitals %>% select(sysname,system_id) %>% unique() %>% pull(system_id)
 colnames(B) <- labs[colnames(B)]
 
-# Analyze current market
-km_system <- read_rds(here("output/results/kessler-mcclellan-2017-edgelist/km-2017-edgelist-system.rds"))$hosp %>% 
-    filter(system_id %in% systems) %>% 
-    mutate(volume = apply(B,2,sum)[sysname])
+
+
+#### JG GOT HERE!!!
+
+
+# # Analyze current market
+# km_system <- 
+#     read_rds(here("output/results/kessler-mcclellan-2017-edgelist/km-2017-edgelist-system.rds"))$hosp %>% 
+#     filter(system_id %in% intersect(colnames(B),systems)) %>% 
+#     mutate(volume = apply(B,2,sum)[sysname]) 
 
 
 res <- B %>% analyze_market()

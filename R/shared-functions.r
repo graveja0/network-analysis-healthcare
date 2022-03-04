@@ -111,7 +111,16 @@ load_master_sf <- function(area_type) {
             flyio::import_shp(pathshp= . , FUN = sf::read_sf, dir = tempdir()) %>% 
             st_transform(crs = 4326) %>% 
             select(geoid = {{idname}},geometry)
-    }  
+    }  else if (area_type=="commuting-zone") {
+            idname <- sym("cz_id")
+            sf_ <- 
+                shapefiles %>% 
+                filter(grepl("01_commuting-zone-shape-file.shp",value)) %>% 
+                pull(value) %>% 
+                flyio::import_shp(pathshp= . , FUN = sf::read_sf, dir = tempdir()) %>% 
+                st_transform(crs = 4326) %>% 
+                select(geoid = {{idname}},geometry)
+        } 
     
     return(sf_)
 }
