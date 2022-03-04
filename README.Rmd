@@ -172,73 +172,85 @@ p_hhi
 
 application_area = "TN"
 
-    create_application = FALSE
-    if (!file.exists(here(glue("output/adjacency-matrices/B-{application_area}")))) create_application =TRUE
-    if (create_application) source(here("R/01_construct-analytic-file.r"))
-    
-    tmp <- read_rds(here::here(glue::glue("output/adjacency-matrices/B-{application_area}")))
-    
-    systems <- tmp$hospitals %>% pull(system_id) %>% unique()
-    B <- tmp$G %>% get_collapsed_incidence_matrix(x = system_id)
-    B <- B[,systems]
-    labs <- tmp$hospitals %>% select(sysname,system_id) %>% unique() %>% pull(sysname)
-    names(labs) <- tmp$hospitals %>% select(sysname,system_id) %>% unique() %>% pull(system_id)
-    colnames(B) <- labs[colnames(B)]
-    
-    # Analyze current market
-    res <- B %>% analyze_market()
-    
-    # Analyze all potential pairwise mergers
-    
-    if (!file.exists(here(glue("output/mergers/G-merged-{application_area}.rds")))) {
-    
-        mergers <- 
-            expand.grid(colnames(B), colnames(B)) %>% 
-            filter(Var1 != Var2) %>% 
-            rowwise() %>% 
-            mutate(pair = paste0(sort(c(Var1,Var2)),collapse="")) %>% 
-            group_by(pair) %>% 
-            filter(row_number()==1) %>% 
-            ungroup() %>% 
-            mutate(id = row_number()) %>% 
-            group_by(id,Var1,Var2,pair) %>% 
-            nest() %>% 
-            mutate(hhi = map2(Var1,Var2,~({
-                merged <- c(.x,.y)
-                B_same <- B[,-which(colnames(B) %in% merged)]
-                B_new <- apply(B[,which(colnames(B) %in% merged)],1,sum)
-                B_merged <- cbind(B_same,B_new)
-                colnames(B_merged) <- c(colnames(B_same),paste0(merged,collapse ="_"))
-                res <- B_merged %>% analyze_market()
-                res$hhi
-            }))) %>% 
-            unnest(cols=c(hhi))
-    
-        mergers %>% write_rds(here(glue("output/mergers/G-merged-{application_area}.rds")))
-    } else {
-      mergers  <- read_rds(here(glue("output/mergers/G-merged-{application_area}.rds")))  
-    }
+create_application = FALSE
+if (!file.exists(here(glue("output/adjacency-matrices/B-{application_area}")))) create_application =TRUE
+if (create_application) {
+    source(here("R/01_construct-analytic-file.r"))
+}
+
+#df_hhi <- read_rds(here(glue("output/hhi/hhi-{application_area}.rds")))
+
+tmp <- read_rds(here::here(glue::glue("output/adjacency-matrices/B-{application_area}")))
+
+systems <- tmp$hospitals %>% pull(system_id) %>% unique()
+B <- tmp$G %>% get_collapsed_incidence_matrix(x = system_id)
+B <- B[,systems]
+labs <- tmp$hospitals %>% select(sysname,system_id) %>% unique() %>% pull(sysname)
+names(labs) <- tmp$hospitals %>% select(sysname,system_id) %>% unique() %>% pull(system_id)
+colnames(B) <- labs[colnames(B)]
+
+# Analyze current market
+km_system <- read_rds(here("output/results/kessler-mcclellan-2017-edgelist/km-2017-edgelist-system.rds"))$hosp %>% 
+    filter(system_id %in% systems) %>% 
+    mutate(volume = apply(B,2,sum)[sysname])
+
+
+res <- B %>% analyze_market()
+
+# Analyze all potential pairwise mergers
+
+if (!file.exists(here(glue("output/mergers/G-merged-{application_area}.rds")))) {
+
+    mergers <- 
+        expand.grid(colnames(B), colnames(B)) %>% 
+        filter(Var1 != Var2) %>% 
+        rowwise() %>% 
+        mutate(pair = paste0(sort(c(Var1,Var2)),collapse="")) %>% 
+        group_by(pair) %>% 
+        filter(row_number()==1) %>% 
+        ungroup() %>% 
+        mutate(id = row_number()) %>% 
+        group_by(id,Var1,Var2,pair) %>% 
+        nest() %>% 
+        mutate(hhi = map2(Var1,Var2,~({
+            merged <- c(.x,.y)
+            B_same <- B[,-which(colnames(B) %in% merged)]
+            B_new <- apply(B[,which(colnames(B) %in% merged)],1,sum)
+            B_merged <- cbind(B_same,B_new)
+            colnames(B_merged) <- c(colnames(B_same),paste0(merged,collapse ="_"))
+            res <- B_merged %>% analyze_market()
+            res$hhi
+        }))) %>% 
+        unnest(cols=c(hhi))
+
+    mergers %>% write_rds(here(glue("output/mergers/G-merged-{application_area}.rds")))
+} else {
+  mergers  <- read_rds(here(glue("output/mergers/G-merged-{application_area}.rds")))  
+}
+
 
 p_dendro <- 
-    res$market_j$dendro  %>% ggdendrogram(rotate=TRUE) +
-    scale_y_continuous(limits = c(0,res$market_j$max_height), breaks = seq(0,res$market_j$max_height,1)) +
-    labs(x = "Market clustering level", 
-         y = "Firm ID") +
-    scale_y_continuous(limits = c(0,res$market_j$max_height*1.2), breaks = scales::breaks_pretty())  +
-    labs(y = "Clustering level")
+res$market_j$dendro  %>% ggdendrogram(rotate=TRUE) +
+scale_y_continuous(limits = c(0,res$market_j$max_height), breaks = seq(0,res$market_j$max_height,1)) +
+labs(x = "Market clustering level", 
+     y = "Firm ID") +
+scale_y_continuous(limits = c(0,res$market_j$max_height*1.2), breaks = scales::breaks_pretty())  +
+labs(y = "Clustering level")
 
 p_hhi <- 
-    res$market_j$hhi %>% 
-    ggplot(aes(x = level, y = jitter(hhi)), guide = FALSE) + 
-    #geom_point(aes(size = N, group = market, colour =factor(market)), guide =FALSE) +
-    theme_ipsum() +
-    ggsci::scale_color_aaas(name="") +
-    theme(legend.position = 'none') +
-    scale_y_continuous(limits = c(0,10000), breaks = seq(0,10000,2000)) +
-    geom_line(data = res$hhi, aes(x = level, y = mean_hhi),lwd=1) +
-    scale_x_continuous(limits = c(0,res$market_j$max_height), breaks = seq(0,res$market_j$max_height,1)) +
-    labs(x = "Market clustering level", 
-         y = "HHI") 
+res$market_j$hhi %>% 
+ggplot(aes(x = level, y = jitter(hhi)), guide = FALSE) + 
+#geom_point(aes(size = N, group = market, colour =factor(market)), guide =FALSE) +
+theme_ipsum() +
+ggsci::scale_color_aaas(name="") +
+theme(legend.position = 'none') +
+scale_y_continuous(limits = c(0,10000), breaks = seq(0,10000,2000)) +
+geom_line(data = res$hhi, aes(x = level, y = mean_hhi),lwd=1) +
+scale_x_continuous(limits = c(0,res$market_j$max_height), breaks = seq(0,res$market_j$max_height,1)) +
+labs(x = "Market clustering level", 
+     y = "HHI") 
+
+
 
 ```
 
@@ -286,20 +298,29 @@ df_frontier_lo <-
     inner_join(mergers,c("id","mean_hhi","level")) %>% 
     arrange(level,id) %>% 
     select(level,pair, mean_hhi)
+hhi_all <- sum((100*apply(B,2,sum)/sum(apply(B,2,sum)))^2)
 
 df_annotate <- 
     data.frame(x = c(0,res$market_j$max_height), y = c(10000,res$market_j$hhi    %>% filter(level==max(level)) %>% pull(hhi))) %>% 
-    mutate(label = c("Each hospital\nis its own market","All hospitals in\none market"))
+    mutate(label = c("Each hospital\nis its own market (HHI=10,000)",glue("All hospitals in\none market (HHI={round(hhi_all,0)})")))
 
+km_hhi <- km_system %>% summarise(mean = weighted.mean(hhi_j,w=volume)) %>% pull(mean) %>% round(.,0)
 p_frontier_final <- 
     p_frontier +
-    geom_line(data =df_frontier_hi, aes(x=level, y = mean_hhi), colour ="red", alpha = 0.5, lty=2,lwd=1.5) +
-    geom_line(data =df_frontier_lo, aes(x=level, y = mean_hhi), colour ="blue", alpha = 0.5, lty=2,lwd=1.5) +
+    geom_line(data =df_frontier_hi, aes(x=level, y = mean_hhi), colour ="red", alpha = 0.5, lty=1,lwd=1) +
+    geom_line(data =df_frontier_lo, aes(x=level, y = mean_hhi), colour ="blue", alpha = 0.5, lty=1,lwd=1) +
     theme(panel.grid.major=element_blank(),
           panel.grid.minor=element_blank()) +
     geom_text(data = df_annotate, aes(x=x,y=y,label=label),size=3,hjust=-.2) +
-    scale_x_continuous(limits = c(0,res$market_j$max_height*1.2), breaks = scales::breaks_pretty())  +
-    geom_point(data = df_annotate, aes(x=x,y=y),size=3)
+    scale_x_continuous(limits = c(0,res$market_j$max_height*1.3), breaks = scales::breaks_pretty())  +
+    geom_point(data = df_annotate, aes(x=x,y=y),size=3) + 
+    geom_hline(aes(yintercept = km_hhi),lty=3) +
+annotate("text",x=res$market_j$max_height,y=km_hhi,
+         label=glue("Kessler-McClellan HHI: {km_hhi}"),size=4,vjust=-1) +
+    geom_hline(aes(yintercept = hhi_all),lty=3) 
+
+
+
 
 p_dendro /
     p_frontier_final

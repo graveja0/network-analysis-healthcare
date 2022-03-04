@@ -141,9 +141,9 @@ calculate_concentration_measures <- function(
     
     ### OUTFLOW HHI
     if (!collapse_to_system_level) {
-        outflow_hhi <- G_hosp %>% get_outflow_hhi(overall = FALSE, collapse = FALSE)
+        outflow_hhi <- G_hosp %>% get_outflow_hhi_orig(overall = FALSE, collapse = FALSE)
     }  else {
-        outflow_hhi <- G_hosp %>% get_outflow_hhi(overall = FALSE, collapse = TRUE) 
+        outflow_hhi <- G_hosp %>% get_outflow_hhi_orig(overall = FALSE, collapse = TRUE) 
     }
     outflow_hhi <- 
         outflow_hhi %>% 

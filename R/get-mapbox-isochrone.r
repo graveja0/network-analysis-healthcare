@@ -1,4 +1,4 @@
-get_mapbox_isochrone <- function(long, lat, contours_minutes, base_url = "https://api.mapbox.com/", mapbox_token = "pk.eyJ1IjoiZ3JhdmVzaiIsImEiOiJjanhieXdyNmMwOHh2M3RueXllcGIzaWlxIn0.mSiBJ9z2Ny9k6F1m6k46JA") {
+get_mapbox_isochrone <- function(long, lat, contours_minutes, base_url = "https://api.mapbox.com/", mapbox_token = "") {
     request_url <- paste0(
         "isochrone/v1/mapbox/driving/",
         long, ",", lat, "?contours_minutes=", contours_minutes,

@@ -23,8 +23,20 @@ source(here("R/get-adjacency-matrix.r"))
 B <- get_adjacency_matrix(target_area=application_area)
 B %>% write_rds(here(glue("output/adjacency-matrices/B-{application_area}")))
 
-
-
+# 4. Market Concentration Measures
+source(here::here("R/calculate-concentration-measures.r"))
+df_hhi <- 
+    suppressWarnings({
+                                    calculate_concentration_measures(
+                                        target_area = application_area,
+                                                        area_denom = area_denom,
+                                                        km = km_system,
+                                                        collapse_to_system_level = TRUE ,
+                                                        system_radius = 100,
+                                                        minimum_market_share = 0.01,
+                                                        minimum_market_size = 25)
+        })
+df_hhi %>% write_rds(here(glue("output/hhi/hhi-{application_area}.rds")))
 
 # ############
 # # SCRATCH

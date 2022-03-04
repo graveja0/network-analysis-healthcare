@@ -394,7 +394,7 @@ get_collapsed_incidence_matrix <- function(G,x) {
     return(B)
 }
 
-get_outflow_hhi <- function(G, overall = TRUE, collapse = FALSE) {
+get_outflow_hhi_orig <- function(G, overall = TRUE, collapse = FALSE) {
     
     # 1. Convert the edge list to an incidence matrix (B)
     # 2. Convert incidence matrix to a market share matrix (S)
