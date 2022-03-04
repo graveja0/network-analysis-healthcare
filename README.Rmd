@@ -26,10 +26,17 @@ library(ggthemes)
 library(sf)
 library(glue)
 library(here)
-library(rlang)
+library(knitr)
 set.seed(12345)
 source(here("R/shared-functions.r"))
-
+states <- c(
+       "AL",    "AR",    "AZ",    "CA",    "CO",    "CT",    "DC",    "DE",    
+    "FL",    "GA",      "IA",    "ID",    "IL",    "IN",    "KS",    "KY",    
+    "LA",    "MA",    "MD",    "ME",    "MI",    "MN",    "MO",    "MS",    "MT",    
+    "NC",    "ND",    "NE",    "NH",    "NJ",    "NM",    "NV",    "NY",    "OH",    
+    "OK",    "OR",    "PA",    "RI",    "SC",    "SD",    "TN",    "TX",    "UT",    
+    "VA",    "VT",    "WA",    "WI",    "WV",    "WY"
+)
 ```
 
 # A Basic Example
@@ -157,5 +164,158 @@ p_hhi <-
     labs(x = "Market clustering level", 
          y = "HHI") 
 p_hhi
+```
+
+# Application
+
+```{r}
+
+application_area = "TN"
+
+    create_application = FALSE
+    if (!file.exists(here(glue("output/adjacency-matrices/B-{application_area}")))) create_application =TRUE
+    if (create_application) source(here("R/01_construct-analytic-file.r"))
+    
+    tmp <- read_rds(here::here(glue::glue("output/adjacency-matrices/B-{application_area}")))
+    
+    systems <- tmp$hospitals %>% pull(system_id) %>% unique()
+    B <- tmp$G %>% get_collapsed_incidence_matrix(x = system_id)
+    B <- B[,systems]
+    labs <- tmp$hospitals %>% select(sysname,system_id) %>% unique() %>% pull(sysname)
+    names(labs) <- tmp$hospitals %>% select(sysname,system_id) %>% unique() %>% pull(system_id)
+    colnames(B) <- labs[colnames(B)]
+    
+    # Analyze current market
+    res <- B %>% analyze_market()
+    
+    # Analyze all potential pairwise mergers
+    
+    if (!file.exists(here(glue("output/mergers/G-merged-{application_area}.rds")))) {
+    
+        mergers <- 
+            expand.grid(colnames(B), colnames(B)) %>% 
+            filter(Var1 != Var2) %>% 
+            rowwise() %>% 
+            mutate(pair = paste0(sort(c(Var1,Var2)),collapse="")) %>% 
+            group_by(pair) %>% 
+            filter(row_number()==1) %>% 
+            ungroup() %>% 
+            mutate(id = row_number()) %>% 
+            group_by(id,Var1,Var2,pair) %>% 
+            nest() %>% 
+            mutate(hhi = map2(Var1,Var2,~({
+                merged <- c(.x,.y)
+                B_same <- B[,-which(colnames(B) %in% merged)]
+                B_new <- apply(B[,which(colnames(B) %in% merged)],1,sum)
+                B_merged <- cbind(B_same,B_new)
+                colnames(B_merged) <- c(colnames(B_same),paste0(merged,collapse ="_"))
+                res <- B_merged %>% analyze_market()
+                res$hhi
+            }))) %>% 
+            unnest(cols=c(hhi))
+    
+        mergers %>% write_rds(here(glue("output/mergers/G-merged-{application_area}.rds")))
+    } else {
+      mergers  <- read_rds(here(glue("output/mergers/G-merged-{application_area}.rds")))  
+    }
+
+p_dendro <- 
+    res$market_j$dendro  %>% ggdendrogram(rotate=TRUE) +
+    scale_y_continuous(limits = c(0,res$market_j$max_height), breaks = seq(0,res$market_j$max_height,1)) +
+    labs(x = "Market clustering level", 
+         y = "Firm ID") +
+    scale_y_continuous(limits = c(0,res$market_j$max_height*1.2), breaks = scales::breaks_pretty())  +
+    labs(y = "Clustering level")
+
+p_hhi <- 
+    res$market_j$hhi %>% 
+    ggplot(aes(x = level, y = jitter(hhi)), guide = FALSE) + 
+    #geom_point(aes(size = N, group = market, colour =factor(market)), guide =FALSE) +
+    theme_ipsum() +
+    ggsci::scale_color_aaas(name="") +
+    theme(legend.position = 'none') +
+    scale_y_continuous(limits = c(0,10000), breaks = seq(0,10000,2000)) +
+    geom_line(data = res$hhi, aes(x = level, y = mean_hhi),lwd=1) +
+    scale_x_continuous(limits = c(0,res$market_j$max_height), breaks = seq(0,res$market_j$max_height,1)) +
+    labs(x = "Market clustering level", 
+         y = "HHI") 
+
+```
+
+```{r, fig.height=8,fig.width=8}
+set.seed(123)
+
+tmp <- res$market_j$G %>%  igraph::simplify(., remove.loops = TRUE) %>% 
+    as_tbl_graph() %>% 
+    activate(edges) %>%
+    filter(weight>5000) %>% 
+    as.igraph()
+E(tmp)$weight_rs <- scales::rescale(E(tmp)$weight,to=c(0,2))
+E(tmp)$arrow.mode="-"
+V(tmp)$size = 1
+V(tmp)$label.color <- "black"
+#V(tmp)$label <- NA
+#tmp %>% plot(layout =layout_in_circle,edge.width=E(tmp)$weight_rs, vertex.label.cex=.5)
+tmp %>% plot(layout =layout_with_lgl,edge.width=E(tmp)$weight_rs, vertex.label.cex=.5)
+
+```
+
+```{r, fig.height = 10, fig.width =10}
+p_frontier <- 
+    p_hhi +
+    geom_line(data = mergers, aes(x = level, y = mean_hhi, group = id),alpha=0) 
+
+df_frontier_hi <- 
+    ggplot_build(p_frontier)$data[[2]] %>% 
+    as_tibble() %>% 
+    group_by(x) %>% 
+    filter(y==max(y)) %>% 
+    #filter(row_number()==1) %>% 
+    select(level = x, mean_hhi = y ,id=group) %>% 
+    inner_join(mergers,c("id","mean_hhi","level")) %>% 
+    arrange(level,id) %>% 
+    select(level,pair, mean_hhi)
+
+df_frontier_lo <- 
+    ggplot_build(p_frontier)$data[[2]] %>% 
+    as_tibble() %>% 
+    group_by(x) %>% 
+    filter(y==min(y)) %>% 
+    #filter(row_number()==1) %>% 
+    select(level = x, mean_hhi = y ,id=group) %>% 
+    inner_join(mergers,c("id","mean_hhi","level")) %>% 
+    arrange(level,id) %>% 
+    select(level,pair, mean_hhi)
+
+df_annotate <- 
+    data.frame(x = c(0,res$market_j$max_height), y = c(10000,res$market_j$hhi    %>% filter(level==max(level)) %>% pull(hhi))) %>% 
+    mutate(label = c("Each hospital\nis its own market","All hospitals in\none market"))
+
+p_frontier_final <- 
+    p_frontier +
+    geom_line(data =df_frontier_hi, aes(x=level, y = mean_hhi), colour ="red", alpha = 0.5, lty=2,lwd=1.5) +
+    geom_line(data =df_frontier_lo, aes(x=level, y = mean_hhi), colour ="blue", alpha = 0.5, lty=2,lwd=1.5) +
+    theme(panel.grid.major=element_blank(),
+          panel.grid.minor=element_blank()) +
+    geom_text(data = df_annotate, aes(x=x,y=y,label=label),size=3,hjust=-.2) +
+    scale_x_continuous(limits = c(0,res$market_j$max_height*1.2), breaks = scales::breaks_pretty())  +
+    geom_point(data = df_annotate, aes(x=x,y=y),size=3)
+
+p_dendro /
+    p_frontier_final
+```
+
+```{r}
+data.frame(system = colnames(B)) %>% 
+    as_tibble() %>% 
+    rowwise() %>% 
+    mutate(frequency = length(grep(system,df_frontier_hi %>% 
+                                       filter(level>3) %>% 
+    pull(pair) ))) %>% 
+    mutate(frequency = 100* frequency / res$market_j$max_height) %>% 
+    filter(frequency>0) %>%     
+    arrange(desc(frequency)) %>% 
+    mutate(frequency = glue("{round(frequency,1)}%")) %>% 
+    kable(col.names=c("Hospital System", "Frequency on Frontier"))
 ```
 

@@ -1,3 +1,4 @@
+
 area_denom = "state"
 target_area = "county"
 collapse = TRUE
@@ -18,133 +19,136 @@ km_system <- read_rds(here(collapsed_output_file))
 km_hospital <- read_rds(here(hospital_output_file))
 
 # 3. Get adjacency matrix
-.x = "TN"
 source(here("R/get-adjacency-matrix.r"))
-B_TN <- get_adjacency_matrix(target_area="TN")
-B_TN %>% write_rds(here(glue("output/adjacency-matrices/B-{.x}")))
-
-
-# 3. Calculate Geography-Level Measures
-source(here::here("R/calculate-concentration-measures.r"))
-.x <- "TN"
-collapse_to_system_level = TRUE
-system_radius = 100
-minimum_market_share = 0.01
-minimum_market_size = 25
-km = km_system
-
-
-hhi_sys <- list() 
-
-for (.x in states[-which(states %in% c("AK","HI","DC"))]) {
-    if (is.null(hhi_sys[[.x]])) {
-        cat(.x)
-    hhi_sys[[.x]] <- suppressWarnings({
-                            calculate_concentration_measures(target_area = .x, 
-                                                area_denom = area_denom, 
-                                                km = km_system, 
-                                                collapse_to_system_level = TRUE)})
-    }
-}
-
-hhi_sys %>% write_rds(here(glue("output/system-hhi-{target_area}.rds")))
-
-
-hhi_hosp <- list() 
-
-for (.x in states[-which(states %in% c("AK","HI","DC"))]) {
-    if (is.null(hhi_hosp[[.x]])) {
-        cat(.x)
-        hhi_hosp[[.x]] <- suppressWarnings({
-            calculate_concentration_measures(target_area = .x, 
-                                             area_denom = area_denom, 
-                                             km = km_system, 
-                                             collapse_to_system_level = FALSE)})
-    }
-}
-
-hhi_hosp %>% write_rds(here(glue("output/hospital-hhi-{target_area}.rds")))
+B <- get_adjacency_matrix(target_area=application_area)
+B %>% write_rds(here(glue("output/adjacency-matrices/B-{application_area}")))
 
 
 
-df_hhi <- 
-    hhi_sys %>% 
-    bind_rows() %>% 
-    as_tibble() %>% 
-    mutate( diff_outflow_km_sys = outflow_hhi_sys - hhi_km_sys)
 
-p1 <- sf_target %>% 
-    inner_join(df_hhi,"geoid") %>% 
-    ggplot() + geom_sf(aes(fill = hhi_km_sys),alpha = 0.75,lwd=0) +
-    #geom_sf(data = hosps,size=2, aes(colour = color, shape = factor(shape)))  +
-    ggthemes::theme_map() +
-    theme(legend.key.size = unit(1, 'cm')) +
-    theme(legend.position = "none") +
-    scale_fill_gradient2(
-        name = "Herfindahl-Hirschman Index",
-        limits = c(000,10000),
-        midpoint = 4000,
-        low = scales::muted("blue"),
-        mid = "white",
-        high = scales::muted("red")
-    ) + 
-    geom_sf(data = sf_ %>% filter(!(geoid %in% c("AK","HI"))) ,alpha = 0,lwd =.1)
-
-
-p2 <- 
-    sf_target %>% 
-    inner_join(df_hhi,"geoid") %>% 
-    ggplot() + geom_sf(aes(fill = outflow_hhi_sys),alpha = 0.75,lwd=0) +
-    #geom_sf(data = hosps,size=2, aes(colour = color, shape = factor(shape)))  +
-    ggthemes::theme_map() +
-    theme(legend.key.size = unit(1, 'cm')) +
-    theme(legend.position = "bottom") +
-    scale_fill_gradient2(
-        name = "Herfindahl-Hirschman Index",
-        limits = c(0000,10000),
-        midpoint = 4000,
-        low = scales::muted("blue"),
-        mid = "white",
-        high = scales::muted("red")
-    ) + 
-    geom_sf(data = sf_ %>% filter(!(geoid %in% c("AK","HI"))) ,alpha = 0,lwd =.1)
-
-
-library(patchwork)
-p1 / p2
-
-df_hhi %>% 
-    ggplot(aes(x = outflow_hhi_sys, y = hhi_km_sys)) + geom_point(alpha = 0.25) + 
-    theme_ipsum() +
-    geom_abline(intercept = 0, slope = 1, lty=3) + 
-    scale_x_continuous(limits = c(0000,10000)) +
-    scale_y_continuous(limits = c(0000,10000)) 
-
-
-outflow <- df_hhi %>% pull(outflow_hhi_sys)
-km <- df_hhi %>% pull(hhi_km_sys)
-qq.out <- qqplot(outflow,km,asp=1)
-qq.out <- as.data.frame(qq.out) 
-
-xylim <- range( c(qq.out$x, qq.out$y) )
-
-# Generate the QQ plot
-ggplot(qq.out[,], aes( x= x, y = y)) + 
-    geom_line() + 
-    geom_abline( intercept=0, slope=1,lty=3) +
-    coord_fixed(ratio = 1, xlim=xylim, ylim = xylim) +
-    xlab("Outflow HHI") + ylab("Kessler-McClellan") + 
-    theme_ipsum() +
-    scale_x_continuous(limits = c(0,10000))+
-    scale_y_continuous(limits = c(0,10000))
-
-
-# 
-# 
 # ############
 # # SCRATCH
 # ############
 # 
+
+# # 3. Calculate Geography-Level Measures
+# source(here::here("R/calculate-concentration-measures.r"))
+# .x <- "TN"
+# collapse_to_system_level = TRUE
+# system_radius = 100
+# minimum_market_share = 0.01
+# minimum_market_size = 25
+# km = km_system
+
+
+# hhi_sys <- list() 
+# 
+# for (.x in states[-which(states %in% c("AK","HI","DC"))]) {
+#     if (is.null(hhi_sys[[.x]])) {
+#         cat(.x)
+#     hhi_sys[[.x]] <- suppressWarnings({
+#                             calculate_concentration_measures(target_area = .x, 
+#                                                 area_denom = area_denom, 
+#                                                 km = km_system, 
+#                                                 collapse_to_system_level = TRUE)})
+#     }
+# }
+# 
+# hhi_sys %>% write_rds(here(glue("output/system-hhi-{target_area}.rds")))
+# 
+# 
+# hhi_hosp <- list() 
+# 
+# for (.x in states[-which(states %in% c("AK","HI","DC"))]) {
+#     if (is.null(hhi_hosp[[.x]])) {
+#         cat(.x)
+#         hhi_hosp[[.x]] <- suppressWarnings({
+#             calculate_concentration_measures(target_area = .x, 
+#                                              area_denom = area_denom, 
+#                                              km = km_system, 
+#                                              collapse_to_system_level = FALSE)})
+#     }
+# }
+# 
+# hhi_hosp %>% write_rds(here(glue("output/hospital-hhi-{target_area}.rds")))
+# 
+# 
+# 
+# df_hhi <- 
+#     hhi_sys %>% 
+#     bind_rows() %>% 
+#     as_tibble() %>% 
+#     mutate( diff_outflow_km_sys = outflow_hhi_sys - hhi_km_sys)
+# 
+# p1 <- sf_target %>% 
+#     inner_join(df_hhi,"geoid") %>% 
+#     ggplot() + geom_sf(aes(fill = hhi_km_sys),alpha = 0.75,lwd=0) +
+#     #geom_sf(data = hosps,size=2, aes(colour = color, shape = factor(shape)))  +
+#     ggthemes::theme_map() +
+#     theme(legend.key.size = unit(1, 'cm')) +
+#     theme(legend.position = "none") +
+#     scale_fill_gradient2(
+#         name = "Herfindahl-Hirschman Index",
+#         limits = c(000,10000),
+#         midpoint = 4000,
+#         low = scales::muted("blue"),
+#         mid = "white",
+#         high = scales::muted("red")
+#     ) + 
+#     geom_sf(data = sf_ %>% filter(!(geoid %in% c("AK","HI"))) ,alpha = 0,lwd =.1)
+# 
+# 
+# p2 <- 
+#     sf_target %>% 
+#     inner_join(df_hhi,"geoid") %>% 
+#     ggplot() + geom_sf(aes(fill = outflow_hhi_sys),alpha = 0.75,lwd=0) +
+#     #geom_sf(data = hosps,size=2, aes(colour = color, shape = factor(shape)))  +
+#     ggthemes::theme_map() +
+#     theme(legend.key.size = unit(1, 'cm')) +
+#     theme(legend.position = "bottom") +
+#     scale_fill_gradient2(
+#         name = "Herfindahl-Hirschman Index",
+#         limits = c(0000,10000),
+#         midpoint = 4000,
+#         low = scales::muted("blue"),
+#         mid = "white",
+#         high = scales::muted("red")
+#     ) + 
+#     geom_sf(data = sf_ %>% filter(!(geoid %in% c("AK","HI"))) ,alpha = 0,lwd =.1)
+# 
+# 
+# library(patchwork)
+# p1 / p2
+# 
+# df_hhi %>% 
+#     ggplot(aes(x = outflow_hhi_sys, y = hhi_km_sys)) + geom_point(alpha = 0.25) + 
+#     theme_ipsum() +
+#     geom_abline(intercept = 0, slope = 1, lty=3) + 
+#     scale_x_continuous(limits = c(0000,10000)) +
+#     scale_y_continuous(limits = c(0000,10000)) 
+# 
+# 
+# outflow <- df_hhi %>% pull(outflow_hhi_sys)
+# km <- df_hhi %>% pull(hhi_km_sys)
+# qq.out <- qqplot(outflow,km,asp=1)
+# qq.out <- as.data.frame(qq.out) 
+# 
+# xylim <- range( c(qq.out$x, qq.out$y) )
+# 
+# # Generate the QQ plot
+# ggplot(qq.out[,], aes( x= x, y = y)) + 
+#     geom_line() + 
+#     geom_abline( intercept=0, slope=1,lty=3) +
+#     coord_fixed(ratio = 1, xlim=xylim, ylim = xylim) +
+#     xlab("Outflow HHI") + ylab("Kessler-McClellan") + 
+#     theme_ipsum() +
+#     scale_x_continuous(limits = c(0,10000))+
+#     scale_y_continuous(limits = c(0,10000))
+# 
+
+# 
+# 
+
 # 
 # 
 # 

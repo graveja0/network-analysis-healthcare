@@ -42,3 +42,21 @@ We can also normalize the matrix:
 ![](README_files/figure-gfm/unnamed-chunk-7-1.png)<!-- -->
 
 ![](README_files/figure-gfm/unnamed-chunk-8-1.png)<!-- -->
+
+# Application
+
+![](README_files/figure-gfm/unnamed-chunk-10-1.png)<!-- -->
+
+![](README_files/figure-gfm/unnamed-chunk-11-1.png)<!-- -->
+
+| Hospital System                          | Frequency on Frontier |
+|:-----------------------------------------|:----------------------|
+| HCA Healthcare                           | 44.1%                 |
+| Ascension Healthcare                     | 38.2%                 |
+| Methodist Le Bonheur Healthcare          | 38.2%                 |
+| Covenant Health                          | 29.4%                 |
+| Baptist Memorial Health Care Corporation | 14.7%                 |
+| Vanderbilt Health                        | 11.8%                 |
+| Ballad Health                            | 8.8%                  |
+| West Tennessee Healthcare                | 5.9%                  |
+| University of Tennessee Medical Center   | 2.9%                  |
