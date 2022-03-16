@@ -1,3 +1,6 @@
+source(here("R/calculate-firm-level-market-outcomes.r"))
+source(here("R/calculate-geographic-level-market-outcomes.r"))
+
 split_into_groups_of_n <- function(x,n) {
     split(x, ceiling(seq_along(x)/n)) %>% 
         map(~(.x %>% data.frame())) %>% 
@@ -511,43 +514,43 @@ detect_markets <- function(B,B_,type) {
                       rownames_to_column(var = "name") %>% 
                       mutate(level = .x))) %>% 
             bind_rows()
-        df_cluster_hhi <- 
-            markets %>% 
-            group_by(level,market) %>% 
-            nest() %>% 
-            mutate(B = map(data,~({
-                B[.x$name,] }))) %>% 
-            ungroup() %>% 
-            mutate(N = map(B,~(sum(.x)))) %>% 
-            mutate(hhi = map(B,~({
-                if (is.null(dim(.x))) {
-                    B_ <- as.matrix(.x) %>% t() 
-                    k_z <- apply(B_,1,sum); names(k_z)  = rownames(B_)
-                    S_z = B_/k_z
-                    hhi_z <- apply( 100* S_z * 100 *S_z,1,sum); names(hhi_z) <- rownames(B_)
-                    hhi_z
-                } else {
-                    B_ <- as.matrix(.x)
-                    # Vectorized volume by geography and firm
-                    k_z <- apply(B_,1,sum); names(k_z)  = rownames(B_)
-                    # Market share matrix. 
-                    S_z <- diag(1/k_z) %*% B_
-                    colnames(S_z) = colnames(B_); rownames(S_z) = rownames(B_)
-                    # Outflow HHI
-                    hhi_z <- apply( 100* S_z * 100 *S_z,1,sum); names(hhi_z) <- rownames(B_)
-                    weighted.mean(hhi_z,w = k_z)
-                }
-                
-            }))) %>% 
-            select(level,market,hhi,N) %>% 
-            unnest(cols=c(hhi,N)) %>% 
-            mutate(market = as.numeric(paste0(market))) %>% 
-            mutate(level = as.numeric(paste0(level)))
+        # df_cluster_hhi <- 
+        #     markets %>% 
+        #     group_by(level,market) %>% 
+        #     nest() %>% 
+        #     mutate(B = map(data,~({
+        #         B[.x$name,] }))) %>% 
+        #     ungroup() %>% 
+        #     mutate(N = map(B,~(sum(.x)))) %>% 
+        #     mutate(hhi = map(B,~({
+        #         if (is.null(dim(.x))) {
+        #             B_ <- as.matrix(.x) %>% t() 
+        #             k_z <- apply(B_,1,sum); names(k_z)  = rownames(B_)
+        #             S_z = B_/k_z
+        #             hhi_z <- apply( 100* S_z * 100 *S_z,1,sum); names(hhi_z) <- rownames(B_)
+        #             hhi_z
+        #         } else {
+        #             B_ <- as.matrix(.x)
+        #             # Vectorized volume by geography and firm
+        #             k_z <- apply(B_,1,sum); names(k_z)  = rownames(B_)
+        #             # Market share matrix. 
+        #             S_z <- diag(1/k_z) %*% B_
+        #             colnames(S_z) = colnames(B_); rownames(S_z) = rownames(B_)
+        #             # Outflow HHI
+        #             hhi_z <- apply( 100* S_z * 100 *S_z,1,sum); names(hhi_z) <- rownames(B_)
+        #             weighted.mean(hhi_z,w = k_z)
+        #         }
+        #         
+        #     }))) %>% 
+        #     select(level,market,hhi,N) %>% 
+        #     unnest(cols=c(hhi,N)) %>% 
+        #     mutate(market = as.numeric(paste0(market))) %>% 
+        #     mutate(level = as.numeric(paste0(level)))
         out <- list(market_modularitymax = market, 
                     markets = markets,
                     dendro = dendro,
                     max_height = max_height, 
-                    hhi = df_cluster_hhi,
+                    #hhi = df_cluster_hhi,
                     G = G_)
     } else if (type=="firm") {
         G_j_ <- 
@@ -565,33 +568,33 @@ detect_markets <- function(B,B_,type) {
                       rownames_to_column(var = "name") %>% 
                       mutate(level = .x))) %>% 
             bind_rows()
-        df_cluster_hhi_firm <- 
-            firm_markets %>% 
-            group_by(level,market) %>% 
-            nest() %>% 
-            mutate(B = map(data,~({
-                tmp <- B[,.x$name]  %>% as.matrix()
-                colnames(tmp) <- .x$name
-                tmp}))) %>% 
-            ungroup() %>% 
-            mutate(N = map(B,~(sum(.x)))) %>% 
-            mutate(hhi = map(B,~({
-                
-                B_ <- as.matrix(.x)
-                # Vectorized volume by geography and firm
-                k_j <- apply(B_,2,sum); names(k_j)  = colnames(B_)
-                sum((100*(k_j/sum(k_j)))^2)
-                
-            }))) %>% 
-            select(level,market,hhi,N) %>% 
-            unnest(cols=c(hhi,N)) %>% 
-            mutate(market = as.numeric(paste0(market))) %>% 
-            mutate(level = as.numeric(paste0(level)))
+        # df_cluster_hhi_firm <- 
+        #     firm_markets %>% 
+        #     group_by(level,market) %>% 
+        #     nest() %>% 
+        #     mutate(B = map(data,~({
+        #         tmp <- B[,.x$name]  %>% as.matrix()
+        #         colnames(tmp) <- .x$name
+        #         tmp}))) %>% 
+        #     ungroup() %>% 
+        #     mutate(N = map(B,~(sum(.x)))) %>% 
+        #     mutate(hhi = map(B,~({
+        #         
+        #         B_ <- as.matrix(.x)
+        #         # Vectorized volume by geography and firm
+        #         k_j <- apply(B_,2,sum); names(k_j)  = colnames(B_)
+        #         sum((100*(k_j/sum(k_j)))^2)
+        #         
+        #     }))) %>% 
+        #     select(level,market,hhi,N) %>% 
+        #     unnest(cols=c(hhi,N)) %>% 
+        #     mutate(market = as.numeric(paste0(market))) %>% 
+        #     mutate(level = as.numeric(paste0(level)))
         out <- list(market_modularitymax = firm_market, 
                     markets = firm_markets,
                     dendro = firm_market_dendro,
                     max_height = firm_max_height, 
-                    hhi = df_cluster_hhi_firm,
+                    #hhi = df_cluster_hhi_firm,
                     G = G_j_)
     }
     
@@ -605,14 +608,37 @@ analyze_market <- function(B) {
     B_j <- B %>% create_unipartite_adjacency(type = "firm")
     
     market_z <- B_z %>% detect_markets(B=B,type = "geo")
-    #market_z$dendro %>% ggdendrogram(rotate = FALSE)
+    outcomes_z_ <- 
+        market_z$markets %>% 
+        inner_join(
+            data.frame(level = 0:market_z$max_height) %>% 
+                mutate(modularity = market_z$market_modularitymax$modularity) %>% 
+                mutate(max_modularity = as.integer(modularity==max(modularity))),"level"
+        ) %>% 
+        group_by(level,market,modularity,max_modularity) %>% 
+        nest() %>% 
+        mutate(market_outcomes = map(data,~calculate_geographic_level_market_outcomes(B=B,c=.x))) %>% 
+        select(-data) %>% 
+        unnest(cols = c(market_outcomes))  %>% 
+        mutate(market_type = "geographic")
+    
     market_j <- B_j %>% detect_markets(B=B,type = "firm")
-    #market_j$dendro %>% ggdendrogram(rotate = FALSE)
-    df_means <- 
-        market_j$hhi %>% 
-        group_by(level) %>% 
-        summarise(mean_hhi = weighted.mean(hhi,w = .data$N))
-    out <- list(G = G, market_z = market_z, market_j = market_j, hhi = df_means)
+    outcomes_j_ <- 
+        market_j$markets %>% 
+        inner_join(
+            data.frame(level = 0:market_j$max_height) %>% 
+                mutate(modularity = market_j$market_modularitymax$modularity) %>% 
+                mutate(max_modularity = as.integer(modularity==max(modularity))),"level"
+        ) %>% 
+        
+        group_by(level,market,modularity,max_modularity) %>% 
+        nest() %>% 
+        mutate(market_outcomes = map(data,~calculate_firm_level_market_outcomes(B=B,c=.x))) %>% 
+        select(-data) %>% 
+        unnest(cols = c(market_outcomes)) %>% 
+        mutate(market_type = "firm")
+
+    out <- list(G = G, market_z = market_z, market_j = market_j, Y_z = outcomes_z_, Y_j = outcomes_j_)
     return(out)
 }
 

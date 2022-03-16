@@ -14,8 +14,6 @@ knitr::opts_chunk$set(echo = FALSE)
 knitr::opts_chunk$set(warning = FALSE)
 knitr::opts_chunk$set(message = FALSE)
 knitr::opts_chunk$set(cache = FALSE)
-
-
 source(here::here("R/manifest.r"))
 
 # library(tidyverse)
@@ -70,21 +68,7 @@ rownames(B) <- paste0("GEO_",1:12)
 G <- get_bipartite_graph(B)
 B_z <- B %>% create_unipartite_adjacency(type = "geo")
 B_j <- B %>% create_unipartite_adjacency(type = "firm")
-G <- get_bipartite_graph(B)
-B_z <- B %>% create_unipartite_adjacency(type = "geo")
-B_j <- B %>% create_unipartite_adjacency(type = "firm")
-
-market_z <- B_z %>% detect_markets(B=B,type = "geo")
-#market_z$dendro %>% ggdendrogram(rotate = FALSE)
-market_j <- B_j %>% detect_markets(B=B,type = "firm")
-#market_j$dendro %>% ggdendrogram(rotate = FALSE)
-df_means <- 
-    market_j$hhi %>% 
-    group_by(level) %>% 
-    summarise(mean_hhi = weighted.mean(hhi,w = .data$N))
-
-# Analyze current market
-res <- B %>% analyze_market()
+res <- B %>% analyze_market() 
 
 # Analyze all potential pairwise mergers
 mergers <- 
@@ -95,19 +79,19 @@ mergers <-
     group_by(pair) %>% 
     filter(row_number()==1) %>% 
     ungroup() %>% 
-    mutate(id = row_number()) %>% 
-    group_by(id,Var1,Var2,pair) %>% 
+    mutate(merge_id = row_number()) %>% 
+    group_by(merge_id,Var1,Var2,pair) %>% 
     nest() %>% 
-    mutate(hhi = map2(Var1,Var2,~({
+    mutate(res = map2(Var1,Var2,~({
         merged <- c(.x,.y)
-        B_same <- B[,-which(colnames(B) %in% merged)]
+        B_same <- B[,-which(colnames(B) %in% merged)] 
         B_new <- apply(B[,which(colnames(B) %in% merged)],1,sum)
         B_merged <- cbind(B_same,B_new)
-        colnames(B_merged) <- c(colnames(B_same),paste0(merged,collapse ="_"))
-        res <- B_merged %>% analyze_market()
-        res$hhi
+        colnames(B_merged) <- c(colnames(B_same),paste0(merged,collapse ="_m_"))
+        tmp <- B_merged %>% analyze_market()
+        tmp$Y_j %>% bind_rows(tmp$Y_z)
     }))) %>% 
-    unnest(cols=c(hhi))
+    unnest(cols=c(res))
 ```
 
 ```{r, echo = FALSE}
@@ -126,6 +110,7 @@ ggsave(plot = fig_demand_toy, here("manuscript/tables-and-figures/figure-toy-dem
 ## Geographic Markets
 
 ```{r}
+
 unipartite_z <- B_z %>% ggmatrix()
 ggsave(plot =unipartite_z, here("manuscript/tables-and-figures/figure-toy-demand-system-adjacency-unipartite-geo.png"),
        height = 6, width = 6)
@@ -156,7 +141,7 @@ We can verify all this by looking at the bipartite adjacency matrix. Hospital A 
 
 ```{r}
 set.seed(123)
-tmp <- market_j$G %>%  igraph::simplify(., remove.loops = TRUE)
+tmp <- res$market_j$G %>%  igraph::simplify(., remove.loops = TRUE)
 E(tmp)$weight_rs <- scales::rescale(E(tmp)$weight,to=c(1,20))
 E(tmp)$arrow.mode="-"
 tmp %>% plot(layout = layout_with_fr,edge.width=E(tmp)$weight_rs)
@@ -180,6 +165,8 @@ ggsave(plot = p_dendro, here("manuscript/tables-and-figures/figure-toy-demand-sy
 ``` 
 
 ```{r}
+
+### JG TAKEUP FROM HERE : THESE RESULTS ARE NOW IN A STACKED DATA FRAME
 p_hhi <- 
     res$market_j$hhi %>% 
     ggplot(aes(x = level, y = jitter(hhi)), guide = FALSE) + 
@@ -243,8 +230,8 @@ if (!file.exists(here(glue("output/mergers/G-merged-{application_area}-{applicat
             B_new <- apply(B[,which(colnames(B) %in% merged)],1,sum)
             B_merged <- cbind(B_same,B_new)
             colnames(B_merged) <- c(colnames(B_same),paste0(merged,collapse ="_"))
-            res <- B_merged %>% analyze_market()
-            res$hhi
+            tmp <- B_merged %>% analyze_market()
+            tmp$Y_j %>% bind_rows(tmp$Y_z)
         }))) %>% 
         unnest(cols=c(hhi))
 
@@ -261,6 +248,14 @@ labs(x = "Market clustering level",
      y = "Firm ID") +
 scale_y_continuous(limits = c(0,res$market_j$max_height*1.2), breaks = scales::breaks_pretty())  +
 labs(y = "Clustering level")
+
+
+# res$Y_j %>% ungroup() %>%  select(level,modularity) %>% unique() %>% 
+#     ggplot(aes(x = level, y= modularity))+ geom_point() + 
+#     theme_ipsum()
+
+# p_dendro + geom_hline(aes(yintercept = res$Y_j %>% filter(max_modularity==1) %>% pull(level) %>% unique() ), 
+#                       colour = "red")
 
 p_hhi <- 
 res$market_j$hhi %>% 
