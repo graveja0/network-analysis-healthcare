@@ -1,16 +1,16 @@
  
-collapse = FALSE
+collapse = TRUE
 
 if (collapse) {
-    output_file <- "output/results/kessler-mcclellan-2017-edgelist/km-2017-edgelist-system.rds"
+    output_file <- glue("output/results/kessler-mcclellan-{application_year}-edgelist/km-{application_year}-edgelist-system.rds")
     
     } else {
-    output_file <- "output/results/kessler-mcclellan-2017-edgelist/km-2017-edgelist-hospital.rds"
+    output_file <- glue("output/results/kessler-mcclellan-{application_year}-edgelist/km-{application_year}-edgelist-hospital.rds")
     
 }
 
-collapsed_output_file <- "output/results/kessler-mcclellan-2017-edgelist/km-2017-edgelist-system.rds"
-hospital_output_file <-"output/results/kessler-mcclellan-2017-edgelist/km-2017-edgelist-hospital.rds"
+collapsed_output_file <- glue("output/results/kessler-mcclellan-{application_year}-edgelist/km-{application_year}-edgelist-system.rds")
+hospital_output_file <-glue("output/results/kessler-mcclellan-{application_year}-edgelist/km-{application_year}-edgelist-hospital.rds")
 
 if (!file.exists(here(output_file))) {
 

@@ -47,6 +47,7 @@ df_node_hosp_ <-
     map(~(
         data.table::fread(here(.x)) %>% 
             janitor::clean_names() %>% 
+            as_tibble() %>% 
             filter(mstate %in% states) %>% 
             mutate(system_id = ifelse(!is.na(sysid),paste0("SYS_",sysid),id)) %>% 
             filter(serv==10))) %>% 

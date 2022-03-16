@@ -481,15 +481,16 @@ get_bipartite_graph <- function(B) {
 }
 create_unipartite_adjacency <- function(B, type ) {
     if (type== "geo") {
-        X <- B %*% t(B>0) 
+        #X <- B %*% t(B>0) 
+        X <- B %*% t(B)
         return(X)
-        #return(t(lower.tri(X)*X) + lower.tri(X) * X + diag(diag(X)))
+       
     }
     
     if (type=="firm") {
-        X <- t(B>0) %*% B %>% t()
+        #X <- t(B>0) %*% B %>% t()
+        X <- t(B) %*% B
         return(X)
-        #return(t(lower.tri(X)*X) + lower.tri(X) * X + diag(diag(X)))
     }
 }
 detect_markets <- function(B,B_,type) {
